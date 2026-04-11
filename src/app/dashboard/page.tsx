@@ -7,7 +7,7 @@ import type { Event, Question, Panelist } from '@/types'
 import { 
   Monitor, Play, Square, Mic, CheckCircle2, 
   XCircle, UserPlus, Trash2, 
-  ArrowRight, Loader2, Lock, Check, Copy, ChevronRight, X
+  ArrowRight, Loader2, Lock, Check, Copy, Radio, ChevronRight, X
 } from 'lucide-react'
 
 export default function ModeratorPage() {
