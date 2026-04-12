@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { getVoterFingerprint } from '@/lib/utils'
 import type { Event, Question } from '@/types'
 import { RealtimeChannel } from '@supabase/supabase-js'
+import { ChevronUp, Circle } from 'lucide-react'
 
 export default function RoomPage() {
   const { eventCode } = useParams()
@@ -22,13 +23,11 @@ export default function RoomPage() {
   const [error, setError] = useState('')
   const [notFound, setNotFound] = useState(false)
 
-  // Memoized payload handler to keep useEffect clean
   const handleRealtimePayload = useCallback((payload: any) => {
     if (payload.eventType === 'INSERT') {
       const q = payload.new as Question
       if (['approved', 'on_screen', 'answered'].includes(q.status)) {
         setQuestions((prev) => {
-          // Prevent duplicates if insert event fires for a question already in state
           if (prev.find(item => item.id === q.id)) return prev
           return [q, ...prev]
         })
@@ -53,7 +52,6 @@ export default function RoomPage() {
     let channel: RealtimeChannel
 
     async function initRoom() {
-      // 1. Fetch Event Details
       const { data: eventData } = await supabase
         .from('events')
         .select('*')
@@ -66,7 +64,6 @@ export default function RoomPage() {
       }
       setEvent(eventData)
 
-      // 2. Fetch Initial Questions
       const { data: questionsData } = await supabase
         .from('questions')
         .select('*')
@@ -76,8 +73,6 @@ export default function RoomPage() {
 
       setQuestions(questionsData || [])
 
-      // 3. Setup Realtime Channel
-      // We subscribe AFTER fetching initial data to ensure the UI is populated
       channel = supabase
         .channel(`room-${eventData.id}`)
         .on(
@@ -95,7 +90,6 @@ export default function RoomPage() {
 
     initRoom()
 
-    // Cleanup: Unsubscribe when component unmounts or eventCode changes
     return () => {
       if (channel) {
         supabase.removeChannel(channel)
@@ -156,8 +150,6 @@ export default function RoomPage() {
     const fp = getVoterFingerprint()
     const supabase = createClient()
 
-    // Optimistic UI update could go here, but since we have Realtime, 
-    // we let the DB update flow back through the subscription
     const { error } = await supabase
       .from('votes')
       .insert({ question_id: questionId, voter_fingerprint: fp })
@@ -198,7 +190,11 @@ export default function RoomPage() {
           <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
             event.status === 'live' ? 'bg-green-50 text-green-600' : 'bg-yellow-50 text-yellow-600'
           }`}>
-            {event.status === 'live' ? '● Live' : 'Waiting'}
+            {event.status === 'live' ? (
+              <span className="flex items-center gap-1">
+                <Circle size={6} className="fill-green-500 text-green-500" /> Live
+              </span>
+            ) : 'Waiting'}
           </span>
         </div>
       </div>
@@ -283,7 +279,7 @@ export default function RoomPage() {
                           : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}
                     >
-                      ▲ {q.votes}
+                      <ChevronUp size={14} /> {q.votes}
                     </button>
                   </div>
                 </div>

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { Event, Question, Panelist } from '@/types'
+import { Circle, Timer, Mic } from 'lucide-react'
 
 export default function PanelistPage() {
   const { eventCode } = useParams()
@@ -56,36 +57,32 @@ export default function PanelistPage() {
 
     setPanelist(panelistData)
 
-    // Get assigned question
     const { data: questionData } = await supabase
       .from('questions')
       .select('*')
       .eq('assigned_panelist_id', panelistId)
       .eq('status', 'on_screen')
-      .single()
+      .maybeSingle()
 
     setAssignedQuestion(questionData || null)
     setLoading(false)
 
-    // Realtime
-    supabase
-      .channel('panelist')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'questions',
-        filter: `assigned_panelist_id=eq.${panelistId}`,
-      }, (payload) => {
-        if (payload.eventType === 'UPDATE') {
-          const q = payload.new as Question
-          if (q.status === 'on_screen') {
-            setAssignedQuestion(q)
-          } else {
-            setAssignedQuestion(null)
-          }
+    const channel = supabase.channel(`panelist-${panelistId}`)
+    channel.on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'questions',
+      filter: `assigned_panelist_id=eq.${panelistId}`,
+    }, (payload) => {
+      if (payload.eventType === 'UPDATE') {
+        const q = payload.new as Question
+        if (q.status === 'on_screen') {
+          setAssignedQuestion(q)
+        } else {
+          setAssignedQuestion(null)
         }
-      })
-      .subscribe()
+      }
+    }).subscribe()
   }
 
   if (loading) {
@@ -111,7 +108,6 @@ export default function PanelistPage() {
 
   return (
     <main className="min-h-screen bg-gray-50 flex flex-col">
-      {/* HEADER */}
       <div className="bg-white border-b border-gray-100 px-6 py-4">
         <div className="max-w-2xl mx-auto flex items-center justify-between">
           <div>
@@ -126,12 +122,15 @@ export default function PanelistPage() {
               ? 'bg-green-50 text-green-600'
               : 'bg-yellow-50 text-yellow-600'
           }`}>
-            {event?.status === 'live' ? '● Live' : 'Waiting'}
+            {event?.status === 'live' ? (
+              <span className="flex items-center gap-1">
+                <Circle size={6} className="fill-green-500 text-green-500" /> Live
+              </span>
+            ) : 'Waiting'}
           </span>
         </div>
       </div>
 
-      {/* QUESTION DISPLAY */}
       <div className="flex-1 flex items-center justify-center px-6 py-12">
         <div className="w-full max-w-2xl">
           {assignedQuestion ? (
@@ -151,8 +150,8 @@ export default function PanelistPage() {
                   {assignedQuestion.asked_by}
                 </span>
                 {assignedQuestion.source === 'voice' && (
-                  <span className="text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full">
-                    voice
+                  <span className="text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+                    <Mic size={10} /> voice
                   </span>
                 )}
               </div>
@@ -160,7 +159,7 @@ export default function PanelistPage() {
           ) : (
             <div className="text-center">
               <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-2xl">⏳</span>
+                <Timer size={28} className="text-gray-300" />
               </div>
               <h2 className="text-lg font-semibold text-gray-900 mb-2">
                 Waiting for your question

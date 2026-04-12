@@ -5,19 +5,9 @@ import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { Event, Question, Panelist } from '@/types'
 import { 
-  Monitor, 
-  Play, 
-  Square, 
-  Mic, 
-  CheckCircle2, 
-  XCircle, 
-  Tv, 
-  UserPlus, 
-  Link, 
-  Trash2, 
-  ArrowRight,
-  Loader2,
-  Lock
+  Monitor, Play, Square, Mic, CheckCircle2, 
+  XCircle, Tv, UserPlus, Link, Trash2, 
+  ArrowRight, Loader2, Lock, Check
 } from 'lucide-react'
 
 export default function ModeratorPage() {
@@ -34,6 +24,7 @@ export default function ModeratorPage() {
   const [showPanelistForm, setShowPanelistForm] = useState(false)
   const [isListening, setIsListening] = useState(false)
   const [activeTab, setActiveTab] = useState<'pending' | 'approved' | 'all'>('pending')
+  const [copiedId, setCopiedId] = useState<string | null>(null)
 
   useEffect(() => {
     loadModerator()
@@ -112,8 +103,7 @@ export default function ModeratorPage() {
       setPanelists(panelistsData || [])
       setLoading(false)
     } catch (err: any) {
-      // Handle the "stolen lock" error by retrying or ignoring if it's a known race condition
-      if (err.message?.includes('lock')) return 
+      if (err.message?.includes('lock')) return
       setLoading(false)
     }
   }
@@ -424,8 +414,8 @@ export default function ModeratorPage() {
           <div className="bg-white rounded-2xl border border-gray-200 p-5">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold text-gray-900">Panelists</h2>
-              <button 
-                onClick={() => setShowPanelistForm(!showPanelistForm)} 
+              <button
+                onClick={() => setShowPanelistForm(!showPanelistForm)}
                 className="flex items-center gap-1 text-xs bg-gray-900 text-white px-3 py-1.5 rounded-lg hover:bg-gray-700"
               >
                 <UserPlus size={12} />
@@ -444,6 +434,9 @@ export default function ModeratorPage() {
             )}
 
             <div className="space-y-2">
+              {panelists.length === 0 && (
+                <p className="text-sm text-gray-400 text-center py-4">No panelists yet.</p>
+              )}
               {panelists.map((p) => (
                 <div key={p.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
                   <div>
@@ -451,12 +444,20 @@ export default function ModeratorPage() {
                     {p.title && <p className="text-xs text-gray-400">{p.title}</p>}
                   </div>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.origin}/panelist/${eventCode}?panelist=${p.id}`);
-                      alert(`Link copied for ${p.name}`);
-                    }} className="flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-md">
-                      <Link size={10} />
-                      Link
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(`${window.location.origin}/panelist/${eventCode}?panelist=${p.id}`)
+                        setCopiedId(p.id)
+                        setTimeout(() => setCopiedId(null), 2000)
+                      }}
+                      className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors ${
+                        copiedId === p.id
+                          ? 'bg-green-100 text-green-600'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      {copiedId === p.id ? <Check size={10} /> : <Link size={10} />}
+                      {copiedId === p.id ? 'Copied!' : 'Link'}
                     </button>
                     <button onClick={() => removePanelist(p.id)} className="text-xs text-red-400 hover:text-red-600 transition-colors">
                       <Trash2 size={12} />
