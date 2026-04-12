@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { generateEventCode } from '@/lib/utils'
 import type { Event, Subscription } from '@/types'
-import { Loader2, Plus, X, ExternalLink, Trash2, Radio } from 'lucide-react'
+import Link from 'next/link'
+import { Loader2, Plus, X, ExternalLink, Trash2, Radio, Zap } from 'lucide-react'
 
 export default function DashboardPage() {
   const router = useRouter()
@@ -114,10 +115,18 @@ export default function DashboardPage() {
     <main className="min-h-screen bg-gray-50">
       <nav className="bg-white border-b border-gray-100 px-6 h-16 flex items-center justify-between sticky top-0 z-10">
         <span className="text-xl font-bold text-gray-900">ASKTC</span>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           <span className="text-xs bg-gray-100 text-gray-600 px-3 py-1 rounded-full font-medium capitalize">
             {subscription?.plan || 'free'}
           </span>
+          {(subscription?.plan || 'free') !== 'enterprise' && (
+            <Link
+              href="/upgrade"
+              className="flex items-center gap-1.5 text-xs bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full font-medium hover:bg-indigo-100 transition-colors"
+            >
+              <Zap size={10} /> Upgrade
+            </Link>
+          )}
           <button
             onClick={handleLogout}
             className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
