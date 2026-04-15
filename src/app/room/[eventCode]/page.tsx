@@ -111,6 +111,7 @@ export default function RoomPage() {
         content: content.trim(),
         asked_by: askedBy.trim() || 'Anonymous',
         source: 'text',
+        status: 'approved',
       })
       .select()
       .single()
@@ -223,7 +224,7 @@ export default function RoomPage() {
 
               {submitted && !showEmailModal && (
                 <p className="text-sm text-green-600">
-                  Question submitted! The moderator will review it.
+                  Question submitted!
                 </p>
               )}
 

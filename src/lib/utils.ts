@@ -23,7 +23,7 @@ export function getVoterFingerprint(): string {
 export function formatAmount(amount: number): string {
   return new Intl.NumberFormat('en-NG', {
     style: 'currency',
-    currency: 'NGN',
+    currency: 'USD',
     minimumFractionDigits: 0,
   }).format(amount)
 }

@@ -43,18 +43,16 @@ const steps = [
 
 const plans = [
   {
-    name: 'FREE', price: '₦0', period: 'forever · no card needed',
+    name: 'FREE', price: '$0', period: 'forever · no card needed',
     featured: false, cta: 'Get started free', href: '/auth/signup',
     features: ['1 event', '50 questions per event', '30 audience members', 'Basic Q&A flow', 'ASKTC watermark'],
   },
   {
-    name: 'PRO', price: '₦15,000', period: '/month · or ₦120,000/year',
-    featured: true, badge: 'most popular', cta: 'Start Pro', href: '/auth/signup',
+ name: 'PRO', price: '$9', period: '/month · or $72/year',    featured: true, badge: 'most popular', cta: 'Start Pro', href: '/auth/signup',
     features: ['Unlimited events', '200 questions per event', '200 audience members', 'Voice questions', 'Panelist assignment', 'No watermark', 'Basic analytics'],
   },
   {
-    name: 'ENTERPRISE', price: '₦45,000', period: '/month · or ₦360,000/year',
-    featured: false, cta: 'Contact us', href: '/contact',
+name: 'ENTERPRISE', price: '$29', period: '/month · or $232/year',    featured: false, cta: 'Contact us', href: '/contact',
     features: ['Everything in Pro', 'Unlimited questions & audience', 'Custom branding', 'Multiple moderators', 'Export PDF / CSV', 'Advanced analytics', 'Dedicated support'],
   },
 ]

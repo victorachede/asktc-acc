@@ -190,7 +190,7 @@ export default function ModeratorPage() {
         content: transcript,
         asked_by: 'Voice Question',
         source: 'voice',
-        status: 'pending'
+        status: 'approved'
       })
     }
 

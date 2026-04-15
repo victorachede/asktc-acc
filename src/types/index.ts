@@ -109,8 +109,7 @@ export const PLAN_LIMITS = {
     export: true,
   },
 }
-
 export const PLAN_PRICES = {
-  pro: { monthly: 15000, yearly: 120000 },
-  enterprise: { monthly: 45000, yearly: 360000 },
+  pro: { monthly: 9, yearly: 72 },
+  enterprise: { monthly: 29, yearly: 232 },
 }
