@@ -35,7 +35,7 @@ export function WordCloudForm({ eventId, onSubmit, disabled }: WordCloudFormProp
       .eq('voter_fingerprint', fp)
 
     if (count && count >= 3) {
-      setError('You've already submitted 3 words for this activity')
+      setError("You've already submitted 3 words for this activity")
       setSubmitting(false)
       return
     }
