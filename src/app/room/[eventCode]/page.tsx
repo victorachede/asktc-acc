@@ -9,6 +9,8 @@ import { PLAN_LIMITS } from '@/types'
 import { RealtimeChannel } from '@supabase/supabase-js'
 import { ChevronUp, Circle, BarChart2, Share2, X, Users } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
+import { useBranding, } from '@/hooks/useBranding'
+import { BrandedLogo, usePrimaryColor } from '@/components/branding/BrandedLogo'
 
 const RATE_LIMITS: Record<string, number> = {
   free: 3,
@@ -52,6 +54,9 @@ export default function RoomPage() {
   const [showQR, setShowQR] = useState(false)
   const [audienceCount, setAudienceCount] = useState(0)
   const roomUrl = typeof window !== 'undefined' ? window.location.href : ''
+
+  const { branding } = useBranding(event?.host_id)
+  const primaryColor = usePrimaryColor(branding)
 
   // Poll state
   const [activePoll, setActivePoll] = useState<Poll | null>(null)
@@ -315,8 +320,8 @@ export default function RoomPage() {
       <div className="bg-white border-b border-gray-100 px-6 py-4">
         <div className="max-w-2xl mx-auto flex items-center justify-between">
           <div>
-            <h1 className="font-bold text-gray-900">{event.title}</h1>
-            <p className="text-xs text-gray-400 font-mono">{event.event_code}</p>
+            <BrandedLogo branding={branding} size="sm" />
+            <p className="text-xs text-gray-400 font-mono mt-0.5">{event.event_code}</p>
           </div>
           <div className="flex items-center gap-2">
             {audienceCount > 1 && (
@@ -446,7 +451,8 @@ export default function RoomPage() {
               {error && <p className="text-sm text-red-500">{error}</p>}
               {submitted && !showEmailModal && <p className="text-sm text-green-600">Question submitted!</p>}
               <button onClick={handleSubmit} disabled={submitting || !content.trim()}
-                className="w-full bg-gray-900 text-white py-3 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50">
+                className="w-full text-white py-3 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                style={{ background: submitting || !content.trim() ? undefined : primaryColor, backgroundColor: submitting || !content.trim() ? '#374151' : primaryColor }}>
                 {submitting ? 'Submitting...' : 'Submit Question'}
               </button>
             </div>

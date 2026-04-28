@@ -33,6 +33,16 @@ export interface Event {
   created_at: string
 }
 
+export interface EventBranding {
+  id: string
+  user_id: string
+  org_name: string | null
+  primary_color: string
+  logo_url: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface Panelist {
   id: string
   event_id: string

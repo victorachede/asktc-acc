@@ -13,6 +13,8 @@ import {
 import { QRCodeSVG } from "qrcode.react";
 import { createClient } from "@/lib/supabase/client";
 import type { Event, Question, Poll } from "@/types";
+import { useBranding } from "@/hooks/useBranding";
+import { BrandedLogo } from "@/components/branding/BrandedLogo";
 
 function QRCode({ value, size = 180 }: { value: string; size?: number }) {
   return (
@@ -161,6 +163,8 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const currentQuestionRef = useRef<Question | null>(null);
   const activePollRef = useRef<Poll | null>(null);
+
+  const { branding } = useBranding(event?.host_id);
 
   useEffect(() => {
     setJoinUrl(`${window.location.origin}/join`);
@@ -333,9 +337,7 @@ export default function Page() {
     <main className="min-h-screen bg-gray-900 flex flex-col">
       {/* TOP BAR */}
       <div className="flex items-center justify-between px-10 py-6">
-        <span className="text-white font-bold text-lg tracking-tight">
-          ASKTC
-        </span>
+        <BrandedLogo branding={branding} size="lg" light />
         <div className="flex items-center gap-4">
           {audienceCount > 0 && (
             <span className="flex items-center gap-1.5 text-xs text-gray-400">
@@ -429,7 +431,9 @@ export default function Page() {
             </>
           )}
         </span>
-        <span className="text-gray-700 text-xs">Powered by ASKTC</span>
+        <span className="text-gray-700 text-xs">
+          {branding?.org_name ? `Powered by ${branding.org_name}` : 'Powered by ASKTC'}
+        </span>
       </div>
     </main>
   );

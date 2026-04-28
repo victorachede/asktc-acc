@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { generateEventCode } from '@/lib/utils'
 import type { Event, Subscription } from '@/types'
 import Link from 'next/link'
-import { Loader2, Plus, X, ExternalLink, Trash2, Radio, Zap, Download } from 'lucide-react'
+import { Loader2, Plus, X, ExternalLink, Trash2, Radio, Zap, Download, Palette } from 'lucide-react'
 
 export default function DashboardPage() {
   const router = useRouter()
@@ -155,6 +155,14 @@ export default function DashboardPage() {
               className="flex items-center gap-1.5 text-xs bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full font-medium hover:bg-indigo-100 transition-colors"
             >
               <Zap size={10} /> Upgrade
+            </Link>
+          )}
+          {isEnterprise && (
+            <Link
+              href="/dashboard/branding"
+              className="flex items-center gap-1.5 text-xs bg-gray-100 text-gray-600 px-3 py-1 rounded-full font-medium hover:bg-gray-200 transition-colors"
+            >
+              <Palette size={10} /> Branding
             </Link>
           )}
           <button onClick={handleLogout} className="text-sm text-gray-500 hover:text-gray-900 transition-colors">
