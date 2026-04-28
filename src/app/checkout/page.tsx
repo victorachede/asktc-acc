@@ -32,7 +32,7 @@ function CheckoutInner() {
         window.Paddle.Checkout.open({
           transactionId: txn,
           settings: {
-            successUrl: `https://stained-gown-crabmeat.ngrok-free.dev/dashboard?upgraded=true`,
+            successUrl: `https://asktc-acc.vercel.app/dashboard?upgraded=true`,
           },
         })
       }
