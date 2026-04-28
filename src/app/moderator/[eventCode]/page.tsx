@@ -10,6 +10,7 @@ import {
   ArrowRight, Loader2, Lock, Check, Search, Send,
   BarChart2, Plus, X, Radio as RadioIcon, Star
 } from 'lucide-react'
+import { EventAnalyticsTab } from '@/components/analytics/EventAnalyticsTab'
 
 type VoiceState = 'idle' | 'listening' | 'review'
 
@@ -25,7 +26,7 @@ export default function ModeratorPage() {
   const [newPanelistTitle, setNewPanelistTitle] = useState('')
   const [addingPanelist, setAddingPanelist] = useState(false)
   const [showPanelistForm, setShowPanelistForm] = useState(false)
-  const [activeTab, setActiveTab] = useState<'pending' | 'approved' | 'all'>('pending')
+  const [activeTab, setActiveTab] = useState<'pending' | 'approved' | 'all' | 'analytics'>('pending')
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -164,7 +165,6 @@ export default function ModeratorPage() {
 
   async function updatePollStatus(pollId: string, status: Poll['status']) {
     const supabase = createClient()
-    // close any active poll first
     if (status === 'active') {
       const activePoll = polls.find(p => p.status === 'active')
       if (activePoll) {
@@ -226,7 +226,6 @@ export default function ModeratorPage() {
     const next = !event.active_word_cloud
     await supabase.from('events').update({ active_word_cloud: next }).eq('id', event.id)
     setEvent(prev => prev ? { ...prev, active_word_cloud: next } : prev)
-    // Load word counts if turning on
     if (next) {
       const { data } = await supabase.from('word_cloud_entries').select('word').eq('event_id', event.id)
       const counts: Record<string, number> = {}
@@ -337,6 +336,7 @@ export default function ModeratorPage() {
     .filter((q) => {
       if (activeTab === 'pending') return q.status === 'pending'
       if (activeTab === 'approved') return ['approved', 'on_screen'].includes(q.status)
+      if (activeTab === 'analytics') return false
       return true
     })
     .filter((q) =>
@@ -438,100 +438,119 @@ export default function ModeratorPage() {
           )}
 
           {/* ── VOICE QUESTION CARD ── */}
-          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-            {voiceState === 'idle' && (
-              <div className="p-5 flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-gray-900">Voice Question</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Capture audience audio — review before posting</p>
-                </div>
-                <button onClick={startVoiceQuestion} className="flex items-center gap-2 text-sm bg-gray-900 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors">
-                  <Mic size={14} /> Start Recording
-                </button>
-              </div>
-            )}
-            {voiceState === 'listening' && (
-              <div className="p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                    <p className="text-sm font-semibold text-gray-900">Recording...</p>
+          {activeTab !== 'analytics' && (
+            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+              {voiceState === 'idle' && (
+                <div className="p-5 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">Voice Question</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Capture audience audio — review before posting</p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button onClick={stopListening} className="flex items-center gap-2 text-sm bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition-colors">
-                      <MicOff size={14} /> Stop
+                  <button onClick={startVoiceQuestion} className="flex items-center gap-2 text-sm bg-gray-900 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors">
+                    <Mic size={14} /> Start Recording
+                  </button>
+                </div>
+              )}
+              {voiceState === 'listening' && (
+                <div className="p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                      <p className="text-sm font-semibold text-gray-900">Recording...</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={stopListening} className="flex items-center gap-2 text-sm bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition-colors">
+                        <MicOff size={14} /> Stop
+                      </button>
+                      <button onClick={cancelVoice} className="text-sm text-gray-400 hover:text-gray-600 px-3 py-2 rounded-lg transition-colors">Cancel</button>
+                    </div>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4 min-h-[64px]">
+                    <p className="text-sm text-gray-900 leading-relaxed">
+                      {finalTranscript}
+                      {interimTranscript && <span className="text-gray-400 italic">{interimTranscript}</span>}
+                      {!finalTranscript && !interimTranscript && <span className="text-gray-400">Speak now...</span>}
+                    </p>
+                  </div>
+                </div>
+              )}
+              {voiceState === 'review' && (
+                <div className="p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <p className="text-sm font-semibold text-gray-900">Review & Edit</p>
+                    <button onClick={cancelVoice} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Discard</button>
+                  </div>
+                  <div className="relative">
+                    <textarea
+                      value={editableTranscript}
+                      onChange={(e) => setEditableTranscript(e.target.value.slice(0, 280))}
+                      rows={3}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-gray-400 transition-colors resize-none mb-3"
+                      placeholder="Edit the transcript if needed..."
+                    />
+                    <span className={`absolute bottom-5 right-3 text-xs font-mono ${editableTranscript.length >= 260 ? editableTranscript.length >= 280 ? 'text-red-500' : 'text-amber-500' : 'text-gray-300'}`}>
+                      {editableTranscript.length}/280
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="text" value={askedByVoice} onChange={(e) => setAskedByVoice(e.target.value)}
+                      placeholder="Asked by (optional)"
+                      className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-gray-400 transition-colors"
+                    />
+                    <button onClick={startVoiceQuestion} className="flex items-center gap-1.5 text-sm border border-gray-200 text-gray-600 px-3 py-2.5 rounded-xl hover:border-gray-400 transition-colors shrink-0">
+                      <Mic size={13} /> Re-record
                     </button>
-                    <button onClick={cancelVoice} className="text-sm text-gray-400 hover:text-gray-600 px-3 py-2 rounded-lg transition-colors">Cancel</button>
+                    <button onClick={submitVoiceQuestion} disabled={submittingVoice || !editableTranscript.trim()}
+                      className="flex items-center gap-1.5 text-sm bg-gray-900 text-white px-4 py-2.5 rounded-xl hover:bg-gray-700 transition-colors disabled:opacity-50 shrink-0">
+                      <Send size={13} /> {submittingVoice ? 'Posting...' : 'Post'}
+                    </button>
                   </div>
                 </div>
-                <div className="bg-gray-50 rounded-xl p-4 min-h-[64px]">
-                  <p className="text-sm text-gray-900 leading-relaxed">
-                    {finalTranscript}
-                    {interimTranscript && <span className="text-gray-400 italic">{interimTranscript}</span>}
-                    {!finalTranscript && !interimTranscript && <span className="text-gray-400">Speak now...</span>}
-                  </p>
-                </div>
-              </div>
-            )}
-            {voiceState === 'review' && (
-              <div className="p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <p className="text-sm font-semibold text-gray-900">Review & Edit</p>
-                  <button onClick={cancelVoice} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Discard</button>
-                </div>
-                <div className="relative">
-                  <textarea
-                    value={editableTranscript}
-                    onChange={(e) => setEditableTranscript(e.target.value.slice(0, 280))}
-                    rows={3}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-gray-400 transition-colors resize-none mb-3"
-                    placeholder="Edit the transcript if needed..."
-                  />
-                  <span className={`absolute bottom-5 right-3 text-xs font-mono ${editableTranscript.length >= 260 ? editableTranscript.length >= 280 ? 'text-red-500' : 'text-amber-500' : 'text-gray-300'}`}>
-                    {editableTranscript.length}/280
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="text" value={askedByVoice} onChange={(e) => setAskedByVoice(e.target.value)}
-                    placeholder="Asked by (optional)"
-                    className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-gray-400 transition-colors"
-                  />
-                  <button onClick={startVoiceQuestion} className="flex items-center gap-1.5 text-sm border border-gray-200 text-gray-600 px-3 py-2.5 rounded-xl hover:border-gray-400 transition-colors shrink-0">
-                    <Mic size={13} /> Re-record
-                  </button>
-                  <button onClick={submitVoiceQuestion} disabled={submittingVoice || !editableTranscript.trim()}
-                    className="flex items-center gap-1.5 text-sm bg-gray-900 text-white px-4 py-2.5 rounded-xl hover:bg-gray-700 transition-colors disabled:opacity-50 shrink-0">
-                    <Send size={13} /> {submittingVoice ? 'Posting...' : 'Post'}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
-          {/* Search */}
-          <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search questions..."
-              className="w-full pl-9 pr-4 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-gray-400 transition-colors bg-white"
-            />
-          </div>
+          {/* Search — hide on analytics tab */}
+          {activeTab !== 'analytics' && (
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search questions..."
+                className="w-full pl-9 pr-4 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-gray-400 transition-colors bg-white"
+              />
+            </div>
+          )}
 
           {/* Tabs */}
           <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
-            {(['pending', 'approved', 'all'] as const).map((tab) => (
+            {(['pending', 'approved', 'all', 'analytics'] as const).map((tab) => (
               <button key={tab} onClick={() => { setActiveTab(tab); setSelectedIds(new Set()) }}
                 className={`text-sm px-4 py-1.5 rounded-lg transition-colors capitalize ${activeTab === tab ? 'bg-white text-gray-900 font-medium shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-                {tab}{tab === 'pending' && pendingCount > 0 && (
-                  <span className="ml-1 bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingCount}</span>
+                {tab === 'analytics' ? (
+                  <span className="flex items-center gap-1.5"><BarChart2 size={12} /> Analytics</span>
+                ) : (
+                  <>
+                    {tab}{tab === 'pending' && pendingCount > 0 && (
+                      <span className="ml-1 bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingCount}</span>
+                    )}
+                  </>
                 )}
               </button>
             ))}
           </div>
 
+          {/* Analytics tab content */}
+          {activeTab === 'analytics' && event && (
+            <EventAnalyticsTab
+              eventId={event.id}
+              questions={questions}
+              polls={polls}
+            />
+          )}
+
           {/* Bulk action bar */}
-          {selectedIds.size > 0 && (
+          {selectedIds.size > 0 && activeTab !== 'analytics' && (
             <div className="flex items-center gap-3 bg-gray-900 text-white px-4 py-2.5 rounded-xl">
               <span className="text-sm font-medium">{selectedIds.size} selected</span>
               <div className="flex-1" />
@@ -542,72 +561,74 @@ export default function ModeratorPage() {
           )}
 
           {/* Question list */}
-          <div className="space-y-3">
-            {filteredQuestions.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center">
-                <p className="text-sm text-gray-400">No questions found.</p>
-              </div>
-            ) : (
-              filteredQuestions.map((q) => (
-                <div key={q.id} className={`bg-white rounded-2xl border p-5 ${q.starred ? 'border-amber-300 bg-amber-50/40' : 'border-gray-200'}`}>
-                  <div className="flex items-start gap-3">
-                    <input type="checkbox" checked={selectedIds.has(q.id)} onChange={() => toggleSelect(q.id)}
-                      className="mt-1 accent-indigo-600 w-4 h-4 shrink-0 cursor-pointer" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-4 mb-3">
-                        <p className="text-sm text-gray-900 flex-1">{q.content}</p>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {q.source === 'voice' && (
-                            <span className="flex items-center gap-1 text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full">
-                              <Mic size={10} /> voice
-                            </span>
-                          )}
-                          <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">▲ {q.votes}</span>
-                          <button
-                            onClick={() => toggleStar(q.id, q.starred)}
-                            className={`p-1 rounded-md transition-colors ${q.starred ? 'text-amber-400 hover:text-amber-500' : 'text-gray-200 hover:text-amber-300'}`}
-                            title={q.starred ? 'Unpin' : 'Pin to top'}
-                          >
-                            <Star size={14} className={q.starred ? 'fill-amber-400' : ''} />
-                          </button>
+          {activeTab !== 'analytics' && (
+            <div className="space-y-3">
+              {filteredQuestions.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center">
+                  <p className="text-sm text-gray-400">No questions found.</p>
+                </div>
+              ) : (
+                filteredQuestions.map((q) => (
+                  <div key={q.id} className={`bg-white rounded-2xl border p-5 ${q.starred ? 'border-amber-300 bg-amber-50/40' : 'border-gray-200'}`}>
+                    <div className="flex items-start gap-3">
+                      <input type="checkbox" checked={selectedIds.has(q.id)} onChange={() => toggleSelect(q.id)}
+                        className="mt-1 accent-indigo-600 w-4 h-4 shrink-0 cursor-pointer" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-4 mb-3">
+                          <p className="text-sm text-gray-900 flex-1">{q.content}</p>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {q.source === 'voice' && (
+                              <span className="flex items-center gap-1 text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full">
+                                <Mic size={10} /> voice
+                              </span>
+                            )}
+                            <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">▲ {q.votes}</span>
+                            <button
+                              onClick={() => toggleStar(q.id, q.starred)}
+                              className={`p-1 rounded-md transition-colors ${q.starred ? 'text-amber-400 hover:text-amber-500' : 'text-gray-200 hover:text-amber-300'}`}
+                              title={q.starred ? 'Unpin' : 'Pin to top'}
+                            >
+                              <Star size={14} className={q.starred ? 'fill-amber-400' : ''} />
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-xs text-gray-400">{q.asked_by}</span>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <select value={q.assigned_panelist_id || ''} onChange={(e) => assignPanelist(q.id, e.target.value || null)}
-                            className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 outline-none bg-transparent">
-                            <option value="">Assign panelist</option>
-                            {panelists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                          </select>
-                          {q.status === 'pending' && (
-                            <>
-                              <button onClick={() => updateStatus(q.id, 'approved')} className="flex items-center gap-1 text-xs bg-green-50 text-green-600 px-3 py-1.5 rounded-lg hover:bg-green-100">
-                                <CheckCircle2 size={12} /> Approve
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-xs text-gray-400">{q.asked_by}</span>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <select value={q.assigned_panelist_id || ''} onChange={(e) => assignPanelist(q.id, e.target.value || null)}
+                              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 outline-none bg-transparent">
+                              <option value="">Assign panelist</option>
+                              {panelists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                            {q.status === 'pending' && (
+                              <>
+                                <button onClick={() => updateStatus(q.id, 'approved')} className="flex items-center gap-1 text-xs bg-green-50 text-green-600 px-3 py-1.5 rounded-lg hover:bg-green-100">
+                                  <CheckCircle2 size={12} /> Approve
+                                </button>
+                                <button onClick={() => updateStatus(q.id, 'rejected')} className="flex items-center gap-1 text-xs bg-red-50 text-red-500 px-3 py-1.5 rounded-lg hover:bg-red-100">
+                                  <XCircle size={12} /> Reject
+                                </button>
+                              </>
+                            )}
+                            {q.status === 'approved' && (
+                              <button onClick={() => updateStatus(q.id, 'on_screen')} className="flex items-center gap-1 text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-100">
+                                <Tv size={12} /> Send to Screen
                               </button>
-                              <button onClick={() => updateStatus(q.id, 'rejected')} className="flex items-center gap-1 text-xs bg-red-50 text-red-500 px-3 py-1.5 rounded-lg hover:bg-red-100">
-                                <XCircle size={12} /> Reject
+                            )}
+                            {q.status === 'on_screen' && (
+                              <button onClick={() => updateStatus(q.id, 'answered')} className="flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg hover:bg-gray-200">
+                                <CheckCircle2 size={12} /> Mark Answered
                               </button>
-                            </>
-                          )}
-                          {q.status === 'approved' && (
-                            <button onClick={() => updateStatus(q.id, 'on_screen')} className="flex items-center gap-1 text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-100">
-                              <Tv size={12} /> Send to Screen
-                            </button>
-                          )}
-                          {q.status === 'on_screen' && (
-                            <button onClick={() => updateStatus(q.id, 'answered')} className="flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg hover:bg-gray-200">
-                              <CheckCircle2 size={12} /> Mark Answered
-                            </button>
-                          )}
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))
-            )}
-          </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
 
         {/* SIDEBAR */}
