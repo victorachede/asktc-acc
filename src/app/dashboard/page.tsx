@@ -20,10 +20,6 @@ export default function DashboardPage() {
   const [error, setError] = useState('')
   const [exportingId, setExportingId] = useState<string | null>(null)
 
-  useEffect(() => {
-    loadDashboard()
-  }, [])
-
   async function loadDashboard() {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
@@ -42,6 +38,10 @@ export default function DashboardPage() {
     setSubscription(subData)
     setLoading(false)
   }
+
+  useEffect(() => {
+    loadDashboard()
+  }, [])
 
   async function createEvent() {
     if (!title.trim()) return
@@ -244,7 +244,6 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {/* CSV export — Enterprise only */}
                   {isEnterprise ? (
                     <button
                       onClick={() => exportCSV(event)}
