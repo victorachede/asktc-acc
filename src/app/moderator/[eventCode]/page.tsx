@@ -37,6 +37,13 @@ export default function ModeratorPage() {
   const [pollOptions, setPollOptions] = useState(['', ''])
   const [creatingPoll, setCreatingPoll] = useState(false)
   const [pollVoteCounts, setPollVoteCounts] = useState<Record<string, number[]>>({})
+  const [isQuiz, setIsQuiz] = useState(false)
+  const [correctOption, setCorrectOption] = useState<number | null>(null)
+
+  // Word cloud state
+  const [wordCounts, setWordCounts] = useState<Record<string, number>>({})
+  const [togglingWordCloud, setTogglingWordCloud] = useState(false)
+  const [togglingAnon, setTogglingAnon] = useState(false)
 
   // Voice state
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
@@ -134,7 +141,14 @@ export default function ModeratorPage() {
     setCreatingPoll(true)
     const supabase = createClient()
     const { data } = await supabase.from('polls')
-      .insert({ event_id: event.id, question: pollQuestion.trim(), options: validOptions, status: 'draft' })
+      .insert({
+        event_id: event.id,
+        question: pollQuestion.trim(),
+        options: validOptions,
+        status: 'draft',
+        is_quiz: isQuiz,
+        correct_option: isQuiz ? correctOption : null,
+      })
       .select().single()
     if (data) {
       setPolls((prev) => [data, ...prev])
@@ -142,6 +156,8 @@ export default function ModeratorPage() {
     }
     setPollQuestion('')
     setPollOptions(['', ''])
+    setIsQuiz(false)
+    setCorrectOption(null)
     setShowPollForm(false)
     setCreatingPoll(false)
   }
@@ -191,6 +207,33 @@ export default function ModeratorPage() {
     const supabase = createClient()
     await supabase.from('events').update({ status }).eq('id', event!.id)
     setEvent((prev) => prev ? { ...prev, status } : prev)
+  }
+
+  async function toggleAnonymous() {
+    if (!event) return
+    setTogglingAnon(true)
+    const supabase = createClient()
+    const next = !event.force_anonymous
+    await supabase.from('events').update({ force_anonymous: next }).eq('id', event.id)
+    setEvent(prev => prev ? { ...prev, force_anonymous: next } : prev)
+    setTogglingAnon(false)
+  }
+
+  async function toggleWordCloud() {
+    if (!event) return
+    setTogglingWordCloud(true)
+    const supabase = createClient()
+    const next = !event.active_word_cloud
+    await supabase.from('events').update({ active_word_cloud: next }).eq('id', event.id)
+    setEvent(prev => prev ? { ...prev, active_word_cloud: next } : prev)
+    // Load word counts if turning on
+    if (next) {
+      const { data } = await supabase.from('word_cloud_entries').select('word').eq('event_id', event.id)
+      const counts: Record<string, number> = {}
+      data?.forEach(({ word }: { word: string }) => { counts[word] = (counts[word] || 0) + 1 })
+      setWordCounts(counts)
+    }
+    setTogglingWordCloud(false)
   }
 
   async function addPanelist() {

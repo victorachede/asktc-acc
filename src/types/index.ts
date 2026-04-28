@@ -30,17 +30,31 @@ export interface Event {
   event_code: string
   host_id: string
   status: EventStatus
+  force_anonymous: boolean
+  active_word_cloud: boolean
   created_at: string
 }
 
-export interface EventBranding {
+export interface WordCloudEntry {
   id: string
-  user_id: string
-  org_name: string | null
-  primary_color: string
-  logo_url: string | null
+  event_id: string
+  word: string
+  voter_fingerprint: string
   created_at: string
-  updated_at: string
+}
+
+export interface QuizScore {
+  id: string
+  poll_id: string
+  voter_fingerprint: string
+  score: number
+  answered_at: string
+}
+
+export interface Reaction {
+  emoji: string
+  x: number
+  id: string
 }
 
 export interface Panelist {
@@ -78,6 +92,8 @@ export interface Poll {
   question: string
   options: string[]
   status: PollStatus
+  is_quiz: boolean
+  correct_option: number | null
   created_at: string
 }
 

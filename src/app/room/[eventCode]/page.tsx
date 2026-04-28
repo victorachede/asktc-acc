@@ -9,8 +9,9 @@ import { PLAN_LIMITS } from '@/types'
 import { RealtimeChannel } from '@supabase/supabase-js'
 import { ChevronUp, Circle, BarChart2, Share2, X, Users } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
-import { useBranding, } from '@/hooks/useBranding'
-import { BrandedLogo, usePrimaryColor } from '@/components/branding/BrandedLogo'
+import { ReactionBar } from '@/components/reactions/ReactionBar'
+import { WordCloudDisplay } from '@/components/wordcloud/WordCloudDisplay'
+import { WordCloudForm } from '@/components/wordcloud/WordCloudForm'
 
 const RATE_LIMITS: Record<string, number> = {
   free: 3,
@@ -55,9 +56,6 @@ export default function RoomPage() {
   const [audienceCount, setAudienceCount] = useState(0)
   const roomUrl = typeof window !== 'undefined' ? window.location.href : ''
 
-  const { branding } = useBranding(event?.host_id)
-  const primaryColor = usePrimaryColor(branding)
-
   // Poll state
   const [activePoll, setActivePoll] = useState<Poll | null>(null)
   const [pollVotes, setPollVotes] = useState<number[]>([])
@@ -69,6 +67,9 @@ export default function RoomPage() {
     } catch { return new Set() }
   })
   const [submittingPollVote, setSubmittingPollVote] = useState(false)
+
+  // Word cloud state
+  const [wordCounts, setWordCounts] = useState<Record<string, number>>({})
 
   const handleRealtimePayload = useCallback((payload: any) => {
     if (payload.eventType === 'INSERT') {
@@ -136,6 +137,16 @@ export default function RoomPage() {
         .maybeSingle()
       if (pollData) { setActivePoll(pollData); loadPollVoteCounts(pollData) }
 
+      // Load word cloud if active
+      if (eventData.active_word_cloud) {
+        const { data: wcData } = await supabase
+          .from('word_cloud_entries').select('word')
+          .eq('event_id', eventData.id)
+        const counts: Record<string, number> = {}
+        wcData?.forEach(({ word }: { word: string }) => { counts[word] = (counts[word] || 0) + 1 })
+        setWordCounts(counts)
+      }
+
       channel = supabase
         .channel(`room-${eventData.id}`)
         .on('postgres_changes', {
@@ -147,6 +158,13 @@ export default function RoomPage() {
           filter: `id=eq.${eventData.id}`,
         }, (payload) => {
           setEvent((prev) => prev ? { ...prev, ...payload.new } : prev)
+        })
+        .on('postgres_changes', {
+          event: 'INSERT', schema: 'public', table: 'word_cloud_entries',
+          filter: `event_id=eq.${eventData.id}`,
+        }, (payload) => {
+          const word = payload.new.word as string
+          setWordCounts(prev => ({ ...prev, [word]: (prev[word] || 0) + 1 }))
         })
         .on('postgres_changes', {
           event: '*', schema: 'public', table: 'polls',
@@ -239,7 +257,7 @@ export default function RoomPage() {
 
     const { data, error } = await supabase.from('questions').insert({
       event_id: event.id, content: content.trim(),
-      asked_by: askedBy.trim() || 'Anonymous', source: 'text',
+      asked_by: event.force_anonymous ? 'Anonymous' : (askedBy.trim() || 'Anonymous'), source: 'text',
       status: 'pending', submitter_fingerprint: fp,
     }).select().single()
 
@@ -320,8 +338,8 @@ export default function RoomPage() {
       <div className="bg-white border-b border-gray-100 px-6 py-4">
         <div className="max-w-2xl mx-auto flex items-center justify-between">
           <div>
-            <BrandedLogo branding={branding} size="sm" />
-            <p className="text-xs text-gray-400 font-mono mt-0.5">{event.event_code}</p>
+            <h1 className="font-bold text-gray-900">{event.title}</h1>
+            <p className="text-xs text-gray-400 font-mono">{event.event_code}</p>
           </div>
           <div className="flex items-center gap-2">
             {audienceCount > 1 && (
@@ -379,6 +397,24 @@ export default function RoomPage() {
       </div>
 
       <div className="max-w-2xl mx-auto px-6 py-8 space-y-6">
+
+        {/* ── WORD CLOUD ── */}
+        {event.active_word_cloud && (
+          <div className="bg-white rounded-2xl border border-purple-200 p-6">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-lg">☁️</span>
+              <p className="text-xs font-semibold text-purple-500 uppercase tracking-widest">Word Cloud</p>
+            </div>
+            <WordCloudDisplay words={wordCounts} theme="room" />
+            {event.status === 'live' && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <WordCloudForm eventId={event.id} onSubmit={(word) => {
+                  setWordCounts(prev => ({ ...prev, [word]: (prev[word] || 0) + 1 }))
+                }} />
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── ACTIVE POLL ── */}
         {activePoll && (
@@ -444,15 +480,22 @@ export default function RoomPage() {
                   </button>
                 </div>
               )}
-              <input type="text" value={askedBy} onChange={(e) => setAskedBy(e.target.value)}
-                placeholder="Your name (optional)"
-                className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm outline-none focus:border-gray-400 transition-colors"
-              />
+              {!event.force_anonymous && (
+                <input type="text" value={askedBy} onChange={(e) => setAskedBy(e.target.value)}
+                  placeholder="Your name (optional)"
+                  className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm outline-none focus:border-gray-400 transition-colors"
+                />
+              )}
+              {event.force_anonymous && (
+                <p className="text-xs text-gray-400 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-gray-300 inline-block" />
+                  This event is anonymous — your name won't be shown
+                </p>
+              )}
               {error && <p className="text-sm text-red-500">{error}</p>}
               {submitted && !showEmailModal && <p className="text-sm text-green-600">Question submitted!</p>}
               <button onClick={handleSubmit} disabled={submitting || !content.trim()}
-                className="w-full text-white py-3 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
-                style={{ background: submitting || !content.trim() ? undefined : primaryColor, backgroundColor: submitting || !content.trim() ? '#374151' : primaryColor }}>
+                className="w-full bg-gray-900 text-white py-3 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50">
                 {submitting ? 'Submitting...' : 'Submit Question'}
               </button>
             </div>
@@ -517,6 +560,10 @@ export default function RoomPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {event.status === 'live' && event.id && (
+        <ReactionBar eventId={event.id} channelName={`reactions-${event.id}`} />
       )}
     </main>
   )
