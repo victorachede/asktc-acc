@@ -3,12 +3,24 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { Mic, MessageSquare, Radio, Users, Trophy } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
 import { createClient } from '@/lib/supabase/client'
 import type { Event, Question } from '@/types'
 
 function QRCode({ value, size = 180 }: { value: string; size?: number }) {
-  const url = `https://chart.googleapis.com/chart?cht=qr&chs=${size}x${size}&chl=${encodeURIComponent(value)}&chld=M|2`
-  return <img src={url} alt="QR Code" width={size} height={size} className="rounded-xl" />
+  return (
+    <QRCodeSVG
+      value={value}
+      size={size}
+      bgColor="transparent"
+      fgColor="#ffffff"
+      level="M"
+      className="rounded-xl"
+    />
+  )
+}
+
+
 }
 
 function EndSummary({ questions, eventTitle }: { questions: Question[]; eventTitle: string }) {
