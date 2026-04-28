@@ -70,21 +70,31 @@ export default function PanelistPage() {
     setLoading(false)
 
     const channel = supabase.channel(`panelist-${panelistId}`)
-    channel.on('postgres_changes', {
-      event: '*',
-      schema: 'public',
-      table: 'questions',
-      filter: `assigned_panelist_id=eq.${panelistId}`,
-    }, (payload) => {
-      if (payload.eventType === 'UPDATE') {
-        const q = payload.new as Question
-        if (q.status === 'on_screen') {
-          setAssignedQuestion(q)
-        } else {
-          setAssignedQuestion(null)
+    channel
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'questions',
+        filter: `assigned_panelist_id=eq.${panelistId}`,
+      }, (payload) => {
+        if (payload.eventType === 'UPDATE') {
+          const q = payload.new as Question
+          if (q.status === 'on_screen') {
+            setAssignedQuestion(q)
+          } else {
+            setAssignedQuestion(null)
+          }
         }
-      }
-    }).subscribe()
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'events',
+        filter: `id=eq.${eventData.id}`,
+      }, (payload) => {
+        setEvent((prev) => prev ? { ...prev, ...payload.new } : prev)
+      })
+      .subscribe()
 
     return () => { supabase.removeChannel(channel) }
   }

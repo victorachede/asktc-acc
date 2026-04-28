@@ -166,10 +166,16 @@ export default function RoomPage() {
       presenceChannel.subscribe(async (status) => {
         if (status === 'SUBSCRIBED') await presenceChannel.track({ role: 'audience' })
       })
+      channel = channel // keep ts happy — presence cleanup below
+      return presenceChannel
     }
 
-    initRoom()
-    return () => { if (channel) supabase.removeChannel(channel) }
+    let presenceChannel: any
+    initRoom().then((pc) => { presenceChannel = pc })
+    return () => {
+      if (channel) supabase.removeChannel(channel)
+      if (presenceChannel) supabase.removeChannel(presenceChannel)
+    }
   }, [eventCode, handleRealtimePayload])
 
   useEffect(() => {
@@ -232,6 +238,10 @@ export default function RoomPage() {
     const { error } = await supabase.from('votes').insert({ question_id: questionId, voter_fingerprint: fp })
     if (error) return
     await supabase.rpc('increment_votes', { question_id: questionId })
+    // Optimistically update the vote count so the UI responds immediately
+    setQuestions((prev) =>
+      prev.map((q) => q.id === questionId ? { ...q, votes: q.votes + 1 } : q)
+    )
     setVotedIds((prev) => {
       const next = new Set([...prev, questionId])
       try { localStorage.setItem(`asktc_votes_${String(eventCode).toUpperCase()}`, JSON.stringify([...next])) } catch { }
@@ -347,10 +357,15 @@ export default function RoomPage() {
           <div className="bg-white rounded-2xl border border-gray-200 p-6">
             <h2 className="font-semibold text-gray-900 mb-4">Ask a question</h2>
             <div className="space-y-3">
-              <textarea value={content} onChange={(e) => setContent(e.target.value)}
-                placeholder="Type your question here..." rows={3}
-                className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm outline-none focus:border-gray-400 transition-colors resize-none"
-              />
+              <div className="relative">
+                <textarea value={content} onChange={(e) => setContent(e.target.value.slice(0, 280))}
+                  placeholder="Type your question here..." rows={3}
+                  className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm outline-none focus:border-gray-400 transition-colors resize-none"
+                />
+                <span className={`absolute bottom-2 right-3 text-xs font-mono ${content.length >= 260 ? content.length >= 280 ? 'text-red-500' : 'text-amber-500' : 'text-gray-300'}`}>
+                  {content.length}/280
+                </span>
+              </div>
               {similarQuestion && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
                   <p className="text-xs font-semibold text-amber-700 mb-1">Similar question already exists</p>

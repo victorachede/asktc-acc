@@ -46,6 +46,7 @@ export default function ModeratorPage() {
   const [askedByVoice, setAskedByVoice] = useState('')
   const [submittingVoice, setSubmittingVoice] = useState(false)
   const recognitionRef = useRef<any>(null)
+  const accumulatedRef = useRef<string>('')
 
   useEffect(() => { loadModerator() }, [])
 
@@ -221,30 +222,31 @@ export default function ModeratorPage() {
   function startVoiceQuestion() {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SpeechRecognition) { alert('Voice recognition not supported. Use Chrome or Edge.'); return }
+    recognitionRef.current?.abort()
+    accumulatedRef.current = ''
     const recognition = new SpeechRecognition()
     recognitionRef.current = recognition
     recognition.lang = 'en'
     recognition.continuous = true
     recognition.interimResults = true
     recognition.maxAlternatives = 3
-    let accumulated = ''
     recognition.onstart = () => { setVoiceState('listening'); setInterimTranscript(''); setFinalTranscript('') }
     recognition.onresult = (e: any) => {
       let interim = '', newFinal = ''
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const result = e.results[i]
-        const best = [...Array(result.length)].map((_, j) => result[j]).sort((a, b) => b.confidence - a.confidence)[0]
+        const best = [...Array(result.length)].map((_, j) => result[j]).sort((a: any, b: any) => b.confidence - a.confidence)[0]
         if (result.isFinal) newFinal += best.transcript + ' '
         else interim += best.transcript
       }
-      if (newFinal) { accumulated += newFinal; setFinalTranscript(accumulated) }
+      if (newFinal) { accumulatedRef.current += newFinal; setFinalTranscript(accumulatedRef.current) }
       setInterimTranscript(interim)
     }
     recognition.onerror = (e: any) => { if (e.error === 'no-speech') return; stopListening() }
     recognition.onend = () => {
       setVoiceState((prev) => {
         if (prev === 'listening') {
-          const text = accumulated.trim()
+          const text = accumulatedRef.current.trim()
           if (text) { setEditableTranscript(text); return 'review' }
           return 'idle'
         }
@@ -256,11 +258,9 @@ export default function ModeratorPage() {
 
   function stopListening() {
     recognitionRef.current?.stop()
-    setVoiceState((prev) => {
-      const text = finalTranscript.trim() || interimTranscript.trim()
-      if (text) { setEditableTranscript(text); return 'review' }
-      return 'idle'
-    })
+    const text = accumulatedRef.current.trim() || interimTranscript.trim()
+    if (text) { setEditableTranscript(text); setVoiceState('review') }
+    else setVoiceState('idle')
     setInterimTranscript('')
   }
 
@@ -275,7 +275,7 @@ export default function ModeratorPage() {
     const supabase = createClient()
     await supabase.from('questions').insert({
       event_id: event.id, content: editableTranscript.trim(),
-      asked_by: askedByVoice.trim() || 'Voice Question', source: 'voice', status: 'approved',
+      asked_by: askedByVoice.trim() || 'Voice Question', source: 'voice', status: 'pending',
     })
     setVoiceState('idle'); setEditableTranscript(''); setFinalTranscript(''); setAskedByVoice(''); setSubmittingVoice(false)
   }
@@ -419,13 +419,18 @@ export default function ModeratorPage() {
                   <p className="text-sm font-semibold text-gray-900">Review & Edit</p>
                   <button onClick={cancelVoice} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Discard</button>
                 </div>
-                <textarea
-                  value={editableTranscript}
-                  onChange={(e) => setEditableTranscript(e.target.value)}
-                  rows={3}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-gray-400 transition-colors resize-none mb-3"
-                  placeholder="Edit the transcript if needed..."
-                />
+                <div className="relative">
+                  <textarea
+                    value={editableTranscript}
+                    onChange={(e) => setEditableTranscript(e.target.value.slice(0, 280))}
+                    rows={3}
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-gray-400 transition-colors resize-none mb-3"
+                    placeholder="Edit the transcript if needed..."
+                  />
+                  <span className={`absolute bottom-5 right-3 text-xs font-mono ${editableTranscript.length >= 260 ? editableTranscript.length >= 280 ? 'text-red-500' : 'text-amber-500' : 'text-gray-300'}`}>
+                    {editableTranscript.length}/280
+                  </span>
+                </div>
                 <div className="flex items-center gap-3">
                   <input
                     type="text" value={askedByVoice} onChange={(e) => setAskedByVoice(e.target.value)}
