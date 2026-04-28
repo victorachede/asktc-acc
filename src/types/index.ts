@@ -35,6 +35,15 @@ export interface Event {
   created_at: string
 }
 
+export interface EventBranding {
+  id: string
+  event_id: string
+  logo_url: string | null
+  primary_color: string | null
+  secondary_color: string | null
+  font_family: string | null
+  created_at: string
+}
 export interface WordCloudEntry {
   id: string
   event_id: string
