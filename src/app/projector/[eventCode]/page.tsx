@@ -20,9 +20,6 @@ function QRCode({ value, size = 180 }: { value: string; size?: number }) {
   )
 }
 
-
-}
-
 function EndSummary({ questions, eventTitle }: { questions: Question[]; eventTitle: string }) {
   const top3 = [...questions]
     .filter((q) => ['approved', 'on_screen', 'answered'].includes(q.status))
@@ -199,7 +196,6 @@ export default function ProjectorPage() {
 
       {/* MAIN DISPLAY */}
       <div className="flex-1 flex items-center justify-center px-16">
-        {/* END OF EVENT SUMMARY */}
         {event?.status === 'ended' ? (
           <EndSummary questions={allQuestions} eventTitle={event.title} />
         ) : currentQuestion ? (
@@ -238,7 +234,7 @@ export default function ProjectorPage() {
 
             {joinUrl && event?.event_code && (
               <div className="flex flex-col items-center gap-3 shrink-0">
-                <div className="p-3 bg-white/5 rounded-2xl shadow-xl" style={{filter: "invert(1)"}}>
+                <div className="p-4 bg-white/5 rounded-2xl shadow-xl">
                   <QRCode value={`${joinUrl}?code=${event.event_code}`} size={180} />
                 </div>
                 <p className="text-gray-600 text-xs">Scan to join</p>
