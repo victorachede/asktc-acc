@@ -7,7 +7,8 @@ import { getVoterFingerprint } from '@/lib/utils'
 import type { Event, Question, Poll } from '@/types'
 import { PLAN_LIMITS } from '@/types'
 import { RealtimeChannel } from '@supabase/supabase-js'
-import { ChevronUp, Circle, BarChart2 } from 'lucide-react'
+import { ChevronUp, Circle, BarChart2, Share2, X, Users } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
 
 const RATE_LIMITS: Record<string, number> = {
   free: 3,
@@ -48,6 +49,9 @@ export default function RoomPage() {
   })
   const [error, setError] = useState('')
   const [notFound, setNotFound] = useState(false)
+  const [showQR, setShowQR] = useState(false)
+  const [audienceCount, setAudienceCount] = useState(0)
+  const roomUrl = typeof window !== 'undefined' ? window.location.href : ''
 
   // Poll state
   const [activePoll, setActivePoll] = useState<Poll | null>(null)
@@ -163,9 +167,13 @@ export default function RoomPage() {
       const presenceChannel = supabase.channel(`presence-${eventData.id}`, {
         config: { presence: { key: `user-${Math.random()}` } },
       })
-      presenceChannel.subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') await presenceChannel.track({ role: 'audience' })
-      })
+      presenceChannel
+        .on('presence', { event: 'sync' }, () => {
+          setAudienceCount(Object.keys(presenceChannel.presenceState()).length)
+        })
+        .subscribe(async (status) => {
+          if (status === 'SUBSCRIBED') await presenceChannel.track({ role: 'audience' })
+        })
       channel = channel // keep ts happy — presence cleanup below
       return presenceChannel
     }
@@ -192,6 +200,18 @@ export default function RoomPage() {
     setSubmitting(true); setError('')
     const supabase = createClient()
     const fp = getVoterFingerprint()
+
+    // Re-fetch event status server-side — client state could be stale
+    const { data: freshEvent } = await supabase
+      .from('events').select('status').eq('id', event.id).single()
+    if (!freshEvent || freshEvent.status === 'ended') {
+      setError('This event has ended. No more questions can be submitted.')
+      setSubmitting(false); return
+    }
+    if (freshEvent.status === 'waiting') {
+      setError('This event hasn\'t started yet.')
+      setSubmitting(false); return
+    }
     const windowStart = new Date(Date.now() - 10 * 60 * 1000).toISOString()
     const rateLimit = RATE_LIMITS[hostPlan] ?? 3
 
@@ -298,16 +318,59 @@ export default function RoomPage() {
             <h1 className="font-bold text-gray-900">{event.title}</h1>
             <p className="text-xs text-gray-400 font-mono">{event.event_code}</p>
           </div>
-          <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-            event.status === 'live' ? 'bg-green-50 text-green-600' : 'bg-yellow-50 text-yellow-600'
-          }`}>
-            {event.status === 'live' ? (
-              <span className="flex items-center gap-1">
-                <Circle size={6} className="fill-green-500 text-green-500" /> Live
+          <div className="flex items-center gap-2">
+            {audienceCount > 1 && (
+              <span className="flex items-center gap-1 text-xs text-gray-400">
+                <Users size={12} /> {audienceCount}
               </span>
-            ) : 'Waiting'}
-          </span>
+            )}
+            <button
+              onClick={() => setShowQR((v) => !v)}
+              className={`p-2 rounded-lg transition-colors ${showQR ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+              title="Share room"
+            >
+              {showQR ? <X size={15} /> : <Share2 size={15} />}
+            </button>
+            <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+              event.status === 'live' ? 'bg-green-50 text-green-600' : 'bg-yellow-50 text-yellow-600'
+            }`}>
+              {event.status === 'live' ? (
+                <span className="flex items-center gap-1">
+                  <Circle size={6} className="fill-green-500 text-green-500" /> Live
+                </span>
+              ) : 'Waiting'}
+            </span>
+          </div>
         </div>
+
+        {showQR && (
+          <div className="max-w-2xl mx-auto mt-4 pt-4 border-t border-gray-100 flex items-center gap-6">
+            <div className="bg-gray-900 p-3 rounded-xl shrink-0">
+              <QRCodeSVG
+                value={roomUrl}
+                size={96}
+                bgColor="transparent"
+                fgColor="#ffffff"
+                level="M"
+              />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-900 mb-1">Share this room</p>
+              <p className="text-xs text-gray-400 mb-3">Anyone with the link or QR can join and ask questions.</p>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg truncate flex-1">
+                  {roomUrl}
+                </span>
+                <button
+                  onClick={() => navigator.clipboard.writeText(roomUrl)}
+                  className="text-xs bg-gray-900 text-white px-3 py-1.5 rounded-lg hover:bg-gray-700 transition-colors shrink-0"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="max-w-2xl mx-auto px-6 py-8 space-y-6">

@@ -8,7 +8,7 @@ import {
   Monitor, Play, Square, Mic, MicOff, CheckCircle2,
   XCircle, Tv, UserPlus, Link, Trash2,
   ArrowRight, Loader2, Lock, Check, Search, Send,
-  BarChart2, Plus, X, Radio as RadioIcon
+  BarChart2, Plus, X, Radio as RadioIcon, Star
 } from 'lucide-react'
 
 type VoiceState = 'idle' | 'listening' | 'review'
@@ -179,6 +179,14 @@ export default function ModeratorPage() {
     await supabase.from('questions').update({ assigned_panelist_id: panelistId }).eq('id', questionId)
   }
 
+  async function toggleStar(id: string, current: boolean) {
+    const supabase = createClient()
+    await supabase.from('questions').update({ starred: !current }).eq('id', id)
+    setQuestions((prev) =>
+      prev.map((q) => q.id === id ? { ...q, starred: !current } : q)
+    )
+  }
+
   async function updateEventStatus(status: Event['status']) {
     const supabase = createClient()
     await supabase.from('events').update({ status }).eq('id', event!.id)
@@ -293,12 +301,21 @@ export default function ModeratorPage() {
       q.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
       q.asked_by.toLowerCase().includes(searchQuery.toLowerCase())
     )
+    .sort((a, b) => {
+      if (a.starred && !b.starred) return -1
+      if (!a.starred && b.starred) return 1
+      return 0
+    })
 
   const pendingCount = questions.filter((q) => q.status === 'pending').length
   const onScreenQuestion = questions.find((q) => q.status === 'on_screen')
   const nextQuestion = questions
     .filter((q) => q.status === 'approved' && q.id !== onScreenQuestion?.id)
-    .sort((a, b) => b.votes - a.votes)[0] ?? null
+    .sort((a, b) => {
+      if (a.starred && !b.starred) return -1
+      if (!a.starred && b.starred) return 1
+      return b.votes - a.votes
+    })[0] ?? null
 
   if (loading) {
     return (
@@ -489,7 +506,7 @@ export default function ModeratorPage() {
               </div>
             ) : (
               filteredQuestions.map((q) => (
-                <div key={q.id} className="bg-white rounded-2xl border border-gray-200 p-5">
+                <div key={q.id} className={`bg-white rounded-2xl border p-5 ${q.starred ? 'border-amber-300 bg-amber-50/40' : 'border-gray-200'}`}>
                   <div className="flex items-start gap-3">
                     <input type="checkbox" checked={selectedIds.has(q.id)} onChange={() => toggleSelect(q.id)}
                       className="mt-1 accent-indigo-600 w-4 h-4 shrink-0 cursor-pointer" />
@@ -503,6 +520,13 @@ export default function ModeratorPage() {
                             </span>
                           )}
                           <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">▲ {q.votes}</span>
+                          <button
+                            onClick={() => toggleStar(q.id, q.starred)}
+                            className={`p-1 rounded-md transition-colors ${q.starred ? 'text-amber-400 hover:text-amber-500' : 'text-gray-200 hover:text-amber-300'}`}
+                            title={q.starred ? 'Unpin' : 'Pin to top'}
+                          >
+                            <Star size={14} className={q.starred ? 'fill-amber-400' : ''} />
+                          </button>
                         </div>
                       </div>
                       <div className="flex items-center justify-between gap-3">

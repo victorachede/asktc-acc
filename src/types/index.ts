@@ -51,6 +51,7 @@ export interface Question {
   status: QuestionStatus
   assigned_panelist_id: string | null
   source: QuestionSource
+  starred: boolean
   created_at: string
 }
 
