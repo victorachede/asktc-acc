@@ -226,7 +226,7 @@ export default function ProjectorPage() {
 
             {joinUrl && event?.event_code && (
               <div className="flex flex-col items-center gap-3 shrink-0">
-                <div className="p-3 bg-white rounded-2xl shadow-xl">
+                <div className="p-3 bg-white/5 rounded-2xl shadow-xl" style={{filter: "invert(1)"}}>
                   <QRCode value={`${joinUrl}?code=${event.event_code}`} size={180} />
                 </div>
                 <p className="text-gray-600 text-xs">Scan to join</p>
