@@ -5,13 +5,33 @@ import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { getVoterFingerprint } from '@/lib/utils'
 import type { Event, Question } from '@/types'
+import { PLAN_LIMITS } from '@/types'
 import { RealtimeChannel } from '@supabase/supabase-js'
 import { ChevronUp, Circle } from 'lucide-react'
+
+// Rate limits per plan: max questions per 10 minutes
+const RATE_LIMITS: Record<string, number> = {
+  free: 3,
+  pro: 10,
+  enterprise: 20,
+}
+
+function isSimilar(a: string, b: string): boolean {
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim()
+  const na = normalize(a), nb = normalize(b)
+  if (na === nb) return true
+  const wordsA = new Set(na.split(' ').filter(w => w.length > 3))
+  const wordsB = nb.split(' ').filter(w => w.length > 3)
+  const overlap = wordsB.filter(w => wordsA.has(w)).length
+  return overlap >= 3 && overlap / Math.max(wordsA.size, wordsB.length) > 0.6
+}
 
 export default function RoomPage() {
   const { eventCode } = useParams()
   const [event, setEvent] = useState<Event | null>(null)
   const [questions, setQuestions] = useState<Question[]>([])
+  const [maxQuestions, setMaxQuestions] = useState<number>(Infinity)
+  const [hostPlan, setHostPlan] = useState<string>('free')
   const [content, setContent] = useState('')
   const [askedBy, setAskedBy] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -19,7 +39,16 @@ export default function RoomPage() {
   const [showEmailModal, setShowEmailModal] = useState(false)
   const [email, setEmail] = useState('')
   const [lastQuestionId, setLastQuestionId] = useState<string | null>(null)
-  const [votedIds, setVotedIds] = useState<Set<string>>(new Set())
+  const [similarQuestion, setSimilarQuestion] = useState<Question | null>(null)
+  const [votedIds, setVotedIds] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set()
+    try {
+      const stored = localStorage.getItem(`asktc_votes_${String(eventCode).toUpperCase()}`)
+      return stored ? new Set(JSON.parse(stored)) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
   const [error, setError] = useState('')
   const [notFound, setNotFound] = useState(false)
 
@@ -33,7 +62,6 @@ export default function RoomPage() {
         })
       }
     }
-
     if (payload.eventType === 'UPDATE' || payload.eventType === 'DELETE') {
       setQuestions((prev) =>
         prev
@@ -58,11 +86,17 @@ export default function RoomPage() {
         .eq('event_code', String(eventCode).toUpperCase())
         .single()
 
-      if (!eventData) {
-        setNotFound(true)
-        return
-      }
+      if (!eventData) { setNotFound(true); return }
       setEvent(eventData)
+
+      const { data: subData } = await supabase
+        .from('subscriptions')
+        .select('plan')
+        .eq('user_id', eventData.host_id)
+        .single()
+      const plan = subData?.plan ?? 'free'
+      setHostPlan(plan)
+      setMaxQuestions(PLAN_LIMITS[plan as keyof typeof PLAN_LIMITS].max_questions)
 
       const { data: questionsData } = await supabase
         .from('questions')
@@ -75,27 +109,41 @@ export default function RoomPage() {
 
       channel = supabase
         .channel(`room-${eventData.id}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'questions',
-            filter: `event_id=eq.${eventData.id}`,
-          },
-          handleRealtimePayload
-        )
+        .on('postgres_changes', {
+          event: '*', schema: 'public', table: 'questions',
+          filter: `event_id=eq.${eventData.id}`,
+        }, handleRealtimePayload)
+        .on('postgres_changes', {
+          event: 'UPDATE', schema: 'public', table: 'events',
+          filter: `id=eq.${eventData.id}`,
+        }, (payload) => {
+          setEvent((prev) => prev ? { ...prev, ...payload.new } : prev)
+        })
         .subscribe()
+
+      const presenceChannel = supabase.channel(`presence-${eventData.id}`, {
+        config: { presence: { key: `user-${Math.random()}` } },
+      })
+      presenceChannel.subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await presenceChannel.track({ role: 'audience' })
+        }
+      })
     }
 
     initRoom()
-
-    return () => {
-      if (channel) {
-        supabase.removeChannel(channel)
-      }
-    }
+    return () => { if (channel) supabase.removeChannel(channel) }
   }, [eventCode, handleRealtimePayload])
+
+  // Duplicate detection — debounced
+  useEffect(() => {
+    if (content.trim().length < 15) { setSimilarQuestion(null); return }
+    const timer = setTimeout(() => {
+      const found = questions.find(q => isSimilar(content, q.content))
+      setSimilarQuestion(found || null)
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [content, questions])
 
   async function handleSubmit() {
     if (!content.trim() || !event) return
@@ -103,6 +151,35 @@ export default function RoomPage() {
     setError('')
 
     const supabase = createClient()
+    const fp = getVoterFingerprint()
+    const windowStart = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+    const rateLimit = RATE_LIMITS[hostPlan] ?? 3
+
+    // Rate limit check — count this fingerprint's submissions in last 10 minutes
+    const { count: recentCount } = await supabase
+      .from('questions')
+      .select('*', { count: 'exact', head: true })
+      .eq('event_id', event.id)
+      .eq('submitter_fingerprint', fp)
+      .gte('created_at', windowStart)
+
+    if (recentCount !== null && recentCount >= rateLimit) {
+      setError(`You've submitted ${rateLimit} questions in the last 10 minutes. Please wait a bit before submitting more.`)
+      setSubmitting(false)
+      return
+    }
+
+    // Event-wide question limit check
+    const { count: totalCount } = await supabase
+      .from('questions')
+      .select('*', { count: 'exact', head: true })
+      .eq('event_id', event.id)
+
+    if (totalCount !== null && totalCount >= maxQuestions) {
+      setError(`This event has reached its question limit (${maxQuestions}).`)
+      setSubmitting(false)
+      return
+    }
 
     const { data, error } = await supabase
       .from('questions')
@@ -111,37 +188,27 @@ export default function RoomPage() {
         content: content.trim(),
         asked_by: askedBy.trim() || 'Anonymous',
         source: 'text',
-        status: 'approved',
+        status: 'pending',
+        submitter_fingerprint: fp,
       })
       .select()
       .single()
 
-    if (error) {
-      setError(error.message)
-      setSubmitting(false)
-      return
-    }
+    if (error) { setError(error.message); setSubmitting(false); return }
 
     setLastQuestionId(data.id)
     setContent('')
     setAskedBy('')
+    setSimilarQuestion(null)
     setSubmitting(false)
     setSubmitted(true)
     setShowEmailModal(true)
   }
 
   async function handleEmailSubmit() {
-    if (!email.trim() || !lastQuestionId) {
-      setShowEmailModal(false)
-      return
-    }
-
+    if (!email.trim() || !lastQuestionId) { setShowEmailModal(false); return }
     const supabase = createClient()
-    await supabase
-      .from('questions')
-      .update({ email: email.trim() })
-      .eq('id', lastQuestionId)
-
+    await supabase.from('questions').update({ email: email.trim() }).eq('id', lastQuestionId)
     setEmail('')
     setShowEmailModal(false)
   }
@@ -150,15 +217,16 @@ export default function RoomPage() {
     if (votedIds.has(questionId)) return
     const fp = getVoterFingerprint()
     const supabase = createClient()
-
-    const { error } = await supabase
-      .from('votes')
-      .insert({ question_id: questionId, voter_fingerprint: fp })
-
+    const { error } = await supabase.from('votes').insert({ question_id: questionId, voter_fingerprint: fp })
     if (error) return
-
     await supabase.rpc('increment_votes', { question_id: questionId })
-    setVotedIds((prev) => new Set([...prev, questionId]))
+    setVotedIds((prev) => {
+      const next = new Set([...prev, questionId])
+      try {
+        localStorage.setItem(`asktc_votes_${String(eventCode).toUpperCase()}`, JSON.stringify([...next]))
+      } catch { /* unavailable */ }
+      return next
+    })
   }
 
   if (notFound) {
@@ -212,6 +280,20 @@ export default function RoomPage() {
                 rows={3}
                 className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm outline-none focus:border-gray-400 transition-colors resize-none"
               />
+
+              {similarQuestion && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                  <p className="text-xs font-semibold text-amber-700 mb-1">Similar question already exists</p>
+                  <p className="text-sm text-amber-800 mb-3">"{similarQuestion.content}"</p>
+                  <button
+                    onClick={() => { handleVote(similarQuestion.id); setSimilarQuestion(null); setContent('') }}
+                    className="text-xs bg-amber-100 hover:bg-amber-200 text-amber-700 px-3 py-1.5 rounded-lg font-medium transition-colors"
+                  >
+                    ▲ Upvote this instead
+                  </button>
+                </div>
+              )}
+
               <input
                 type="text"
                 value={askedBy}
@@ -223,9 +305,7 @@ export default function RoomPage() {
               {error && <p className="text-sm text-red-500">{error}</p>}
 
               {submitted && !showEmailModal && (
-                <p className="text-sm text-green-600">
-                  Question submitted!
-                </p>
+                <p className="text-sm text-green-600">Question submitted!</p>
               )}
 
               <button

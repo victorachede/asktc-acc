@@ -17,10 +17,12 @@ export default function PanelistPage() {
   const [notFound, setNotFound] = useState(false)
 
   useEffect(() => {
-    loadPanelist()
+    let cleanup: (() => void) | undefined
+    loadPanelist().then((fn) => { cleanup = fn })
+    return () => { cleanup?.() }
   }, [])
 
-  async function loadPanelist() {
+  async function loadPanelist(): Promise<(() => void) | undefined> {
     if (!panelistId) {
       setNotFound(true)
       setLoading(false)
@@ -83,6 +85,8 @@ export default function PanelistPage() {
         }
       }
     }).subscribe()
+
+    return () => { supabase.removeChannel(channel) }
   }
 
   if (loading) {
