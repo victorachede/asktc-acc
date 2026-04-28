@@ -1,4 +1,8 @@
-import type { EventBranding } from '@/types'
+type EventBranding = {
+  logo_url?: string
+  org_name?: string
+  primary_color?: string
+}
 
 interface BrandedHeaderProps {
   branding: EventBranding | null
