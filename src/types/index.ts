@@ -4,6 +4,7 @@ export type QuestionStatus = 'pending' | 'approved' | 'on_screen' | 'answered' |
 export type QuestionSource = 'text' | 'voice'
 export type PaymentStatus = 'pending' | 'success' | 'failed'
 export type BillingCycle = 'monthly' | 'yearly'
+export type PollStatus = 'draft' | 'active' | 'closed'
 
 export interface Profile {
   id: string
@@ -60,6 +61,23 @@ export interface Vote {
   created_at: string
 }
 
+export interface Poll {
+  id: string
+  event_id: string
+  question: string
+  options: string[]
+  status: PollStatus
+  created_at: string
+}
+
+export interface PollVote {
+  id: string
+  poll_id: string
+  option_index: number
+  voter_fingerprint: string
+  created_at: string
+}
+
 export interface Payment {
   id: string
   user_id: string
@@ -109,6 +127,7 @@ export const PLAN_LIMITS = {
     export: true,
   },
 }
+
 export const PLAN_PRICES = {
   pro: { monthly: 9, yearly: 72 },
   enterprise: { monthly: 29, yearly: 232 },
