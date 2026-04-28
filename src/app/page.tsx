@@ -263,13 +263,19 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── FOOTER ── */}
-      <footer style={{ borderTop: '1px solid #f4f4f5', padding: '28px 32px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
-          <span style={{ fontSize: 12, fontWeight: 500 }}>ASKTC</span>
-          <p style={{ fontSize: 11, color: '#a1a1aa', fontFamily: "'DM Mono', monospace" }}>© 2026 ASKTC · built by black sheep co.</p>
-        </div>
-      </footer>
+     {/* ── FOOTER ── */}
+<footer style={{ borderTop: '1px solid #f4f4f5', padding: '28px 32px' }}>
+  <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
+    <span style={{ fontSize: 12, fontWeight: 500 }}>ASKTC</span>
+    <p style={{ fontSize: 11, color: '#a1a1aa', fontFamily: "'DM Mono', monospace" }}>© 2026 ASKTC · built by black sheep co.</p>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+      <a href="https://asktc-acc.vercel.app/terms" style={{ fontSize: 11, color: '#a1a1aa', textDecoration: 'none' }}>Terms</a>
+      <a href="https://asktc-acc.vercel.app/privacy" style={{ fontSize: 11, color: '#a1a1aa', textDecoration: 'none' }}>Privacy</a>
+      <a href="https://asktc-acc.vercel.app/refund" style={{ fontSize: 11, color: '#a1a1aa', textDecoration: 'none' }}>Refund</a>
+      <a href="https://github.com/victorachede/asktc-acc" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#a1a1aa', textDecoration: 'none' }}>GitHub</a>
+    </div>
+  </div>
+</footer>
 
     </main>
   )
