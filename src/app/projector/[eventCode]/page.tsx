@@ -1,441 +1,576 @@
-"use client";
+'use client'
 
-import { useEffect, useState, useRef } from "react";
-import { useParams } from "next/navigation";
-import {
-  Mic,
-  MessageSquare,
-  Radio,
-  Users,
-  Trophy,
-  BarChart2,
-} from "lucide-react";
-import { QRCodeSVG } from "qrcode.react";
-import { createClient } from "@/lib/supabase/client";
-import type { Event, Question, Poll } from "@/types";
-import { ReactionBar } from "@/components/reactions/ReactionBar";
+import { useEffect, useState, useCallback } from 'react'
+import { useParams } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
+import { getVoterFingerprint } from '@/lib/utils'
+import type { Event, Question, Poll } from '@/types'
+import { PLAN_LIMITS } from '@/types'
+import { RealtimeChannel } from '@supabase/supabase-js'
+import { ChevronUp, Circle, BarChart2, Share2, X, Users } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
+import { ReactionBar } from '@/components/reactions/ReactionBar'
+import { WordCloudDisplay } from '@/components/wordcloud/WordCloudDisplay'
+import { WordCloudForm } from '@/components/wordcloud/WordCloudForm'
+import { useBranding } from '@/hooks/useBranding'
+import { BrandedLogo } from '@/app/dashboard/branding/BrandedLogo'
 
-function QRCode({ value, size = 180 }: { value: string; size?: number }) {
-  return (
-    <QRCodeSVG
-      value={value}
-      size={size}
-      bgColor="transparent"
-      fgColor="#ffffff"
-      level="M"
-      className="rounded-xl"
-    />
-  );
+const RATE_LIMITS: Record<string, number> = {
+  free: 3,
+  pro: 10,
+  enterprise: 20,
 }
 
-function EndSummary({
-  questions,
-  eventTitle,
-}: {
-  questions: Question[];
-  eventTitle: string;
-}) {
-  const top3 = [...questions]
-    .filter((q) => ["approved", "on_screen", "answered"].includes(q.status))
-    .sort((a, b) => b.votes - a.votes)
-    .slice(0, 3);
-
-  const medals = ["🥇", "🥈", "🥉"];
-
-  return (
-    <div className="w-full max-w-4xl mx-auto">
-      <div className="flex items-center justify-center gap-3 mb-12">
-        <Trophy size={28} className="text-yellow-400" />
-        <div className="text-center">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-widest mb-1">
-            Event Ended
-          </p>
-          <h2 className="text-3xl font-bold text-white">{eventTitle}</h2>
-        </div>
-        <Trophy size={28} className="text-yellow-400" />
-      </div>
-
-      <p className="text-center text-gray-500 text-sm uppercase tracking-widest mb-8">
-        Top Questions
-      </p>
-
-      <div className="space-y-4">
-        {top3.length === 0 && (
-          <p className="text-center text-gray-600">
-            No questions were submitted.
-          </p>
-        )}
-        {top3.map((q, i) => (
-          <div
-            key={q.id}
-            className={`rounded-2xl p-6 flex items-start gap-5 ${
-              i === 0
-                ? "bg-yellow-400/10 border border-yellow-400/30"
-                : i === 1
-                  ? "bg-white/5 border border-white/10"
-                  : "bg-white/3 border border-white/5"
-            }`}
-          >
-            <span className="text-3xl shrink-0 mt-0.5">{medals[i]}</span>
-            <div className="flex-1 min-w-0">
-              <p
-                className={`font-medium leading-snug mb-2 ${i === 0 ? "text-xl text-white" : "text-lg text-gray-200"}`}
-              >
-                {q.content}
-              </p>
-              <span className="text-sm text-gray-500">{q.asked_by}</span>
-            </div>
-            <div className="text-right shrink-0">
-              <p
-                className={`font-bold ${i === 0 ? "text-2xl text-yellow-400" : "text-xl text-gray-400"}`}
-              >
-                {q.votes}
-              </p>
-              <p className="text-xs text-gray-600">votes</p>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+function isSimilar(a: string, b: string): boolean {
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim()
+  const na = normalize(a), nb = normalize(b)
+  if (na === nb) return true
+  const wordsA = new Set(na.split(' ').filter(w => w.length > 3))
+  const wordsB = nb.split(' ').filter(w => w.length > 3)
+  const overlap = wordsB.filter(w => wordsA.has(w)).length
+  return overlap >= 3 && overlap / Math.max(wordsA.size, wordsB.length) > 0.6
 }
 
-function PollDisplay({ poll, votes }: { poll: Poll; votes: number[] }) {
-  const total = votes.reduce((a, b) => a + b, 0);
-  const maxVotes = Math.max(...votes, 1);
+export default function RoomPage() {
+  const { eventCode } = useParams()
+  const [event, setEvent] = useState<Event | null>(null)
+  const [questions, setQuestions] = useState<Question[]>([])
+  const [maxQuestions, setMaxQuestions] = useState<number>(Infinity)
+  const [hostPlan, setHostPlan] = useState<string>('free')
+  const [content, setContent] = useState('')
+  const [askedBy, setAskedBy] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
+  const [showEmailModal, setShowEmailModal] = useState(false)
+  const [email, setEmail] = useState('')
+  const [lastQuestionId, setLastQuestionId] = useState<string | null>(null)
+  const [similarQuestion, setSimilarQuestion] = useState<Question | null>(null)
+  const [votedIds, setVotedIds] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set()
+    try {
+      const stored = localStorage.getItem(`asktc_votes_${String(eventCode).toUpperCase()}`)
+      return stored ? new Set(JSON.parse(stored)) : new Set()
+    } catch { return new Set() }
+  })
+  const [error, setError] = useState('')
+  const [notFound, setNotFound] = useState(false)
+  const [showQR, setShowQR] = useState(false)
+  const [audienceCount, setAudienceCount] = useState(0)
+  const roomUrl = typeof window !== 'undefined' ? window.location.href : ''
 
-  return (
-    <div className="w-full max-w-4xl mx-auto">
-      <div className="flex items-center justify-center gap-3 mb-10">
-        <BarChart2 size={22} className="text-indigo-400" />
-        <p className="text-xs font-medium text-indigo-400 uppercase tracking-widest">
-          Live Poll
-        </p>
-      </div>
-      <p className="text-3xl sm:text-4xl font-semibold text-white text-center leading-tight mb-12">
-        {poll.question}
-      </p>
-      <div className="space-y-5">
-        {poll.options.map((opt, i) => {
-          const pct = total > 0 ? Math.round((votes[i] / total) * 100) : 0;
-          const isLeading = votes[i] === maxVotes && votes[i] > 0;
-          return (
-            <div key={i}>
-              <div className="flex items-center justify-between mb-2">
-                <span
-                  className={`text-lg font-medium ${isLeading ? "text-white" : "text-gray-300"}`}
-                >
-                  {opt}
-                </span>
-                <span
-                  className={`text-2xl font-bold font-mono ${isLeading ? "text-indigo-400" : "text-gray-500"}`}
-                >
-                  {pct}%
-                </span>
-              </div>
-              <div className="h-3 bg-white/5 rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all duration-700 ${isLeading ? "bg-indigo-500" : "bg-white/20"}`}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <p className="text-center text-gray-600 text-sm mt-8">
-        {total} vote{total !== 1 ? "s" : ""}
-      </p>
-    </div>
-  );
-}
+  // Poll state
+  const [activePoll, setActivePoll] = useState<Poll | null>(null)
+  const [pollVotes, setPollVotes] = useState<number[]>([])
+  const [votedPollIds, setVotedPollIds] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set()
+    try {
+      const stored = localStorage.getItem(`asktc_poll_votes_${String(eventCode).toUpperCase()}`)
+      return stored ? new Set(JSON.parse(stored)) : new Set()
+    } catch { return new Set() }
+  })
+  const [submittingPollVote, setSubmittingPollVote] = useState(false)
 
-export default function Page() {
-  const { eventCode } = useParams();
-  const [event, setEvent] = useState<Event | null>(null);
-  const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
-  const [allQuestions, setAllQuestions] = useState<Question[]>([]);
-  const [activePoll, setActivePoll] = useState<Poll | null>(null);
-  const [pollVotes, setPollVotes] = useState<number[]>([]);
-  const [audienceCount, setAudienceCount] = useState(0);
-  const [joinUrl, setJoinUrl] = useState("");
-  const [loading, setLoading] = useState(true);
-  const currentQuestionRef = useRef<Question | null>(null);
-  const activePollRef = useRef<Poll | null>(null);
+  // Word cloud state
+  const [wordCounts, setWordCounts] = useState<Record<string, number>>({})
+
+  // Branding — fires once event loads and host_id is known
+  const { branding } = useBranding(event?.host_id)
+
+  const handleRealtimePayload = useCallback((payload: any) => {
+    if (payload.eventType === 'INSERT') {
+      const q = payload.new as Question
+      if (['approved', 'on_screen', 'answered'].includes(q.status)) {
+        setQuestions((prev) => {
+          if (prev.find(item => item.id === q.id)) return prev
+          return [q, ...prev]
+        })
+      }
+    }
+    if (payload.eventType === 'UPDATE' || payload.eventType === 'DELETE') {
+      setQuestions((prev) =>
+        prev
+          .map((q) => (payload.eventType === 'UPDATE' && q.id === payload.new.id ? (payload.new as Question) : q))
+          .filter((q) => {
+            if (payload.eventType === 'DELETE' && q.id === payload.old.id) return false
+            return ['approved', 'on_screen', 'answered'].includes(q.status)
+          })
+          .sort((a, b) => b.votes - a.votes)
+      )
+    }
+  }, [])
+
+  async function loadPollVoteCounts(poll: Poll) {
+    const supabase = createClient()
+    const { data } = await supabase.from('poll_votes').select('option_index').eq('poll_id', poll.id)
+    const tally = Array(poll.options.length).fill(0)
+    data?.forEach((v) => { if (tally[v.option_index] !== undefined) tally[v.option_index]++ })
+    setPollVotes(tally)
+  }
 
   useEffect(() => {
-    setJoinUrl(`${window.location.origin}/join`);
-    loadProjector();
-  }, []);
+    const supabase = createClient()
+    let channel: RealtimeChannel
 
-  async function loadPollVotes(poll: Poll) {
-    const supabase = createClient();
-    const { data } = await supabase
-      .from("poll_votes")
-      .select("option_index")
-      .eq("poll_id", poll.id);
-    const tally = Array(poll.options.length).fill(0);
-    data?.forEach((v) => {
-      if (tally[v.option_index] !== undefined) tally[v.option_index]++;
-    });
-    setPollVotes(tally);
-  }
+    async function initRoom() {
+      const { data: eventData } = await supabase
+        .from('events').select('*')
+        .eq('event_code', String(eventCode).toUpperCase())
+        .single()
 
-  async function loadProjector() {
-    const supabase = createClient();
+      if (!eventData) { setNotFound(true); return }
+      setEvent(eventData)
 
-    const { data: eventData } = await supabase
-      .from("events")
-      .select("*")
-      .eq("event_code", String(eventCode).toUpperCase())
-      .single();
+      const { data: subData } = await supabase
+        .from('subscriptions').select('plan')
+        .eq('user_id', eventData.host_id).single()
+      const plan = subData?.plan ?? 'free'
+      setHostPlan(plan)
+      setMaxQuestions(PLAN_LIMITS[plan as keyof typeof PLAN_LIMITS].max_questions)
 
-    if (!eventData) {
-      setLoading(false);
-      return;
-    }
+      const { data: questionsData } = await supabase
+        .from('questions').select('*')
+        .eq('event_id', eventData.id)
+        .in('status', ['approved', 'on_screen', 'answered'])
+        .order('votes', { ascending: false })
+      setQuestions(questionsData || [])
 
-    setEvent(eventData);
+      // Load active poll
+      const { data: pollData } = await supabase
+        .from('polls').select('*')
+        .eq('event_id', eventData.id)
+        .eq('status', 'active')
+        .maybeSingle()
+      if (pollData) { setActivePoll(pollData); loadPollVoteCounts(pollData) }
 
-    const [
-      { data: questionData },
-      { data: allQuestionsData },
-      { data: pollData },
-    ] = await Promise.all([
-      supabase
-        .from("questions")
-        .select("*")
-        .eq("event_id", eventData.id)
-        .eq("status", "on_screen")
-        .maybeSingle(),
-      supabase
-        .from("questions")
-        .select("*")
-        .eq("event_id", eventData.id)
-        .order("votes", { ascending: false }),
-      supabase
-        .from("polls")
-        .select("*")
-        .eq("event_id", eventData.id)
-        .eq("status", "active")
-        .maybeSingle(),
-    ]);
+      // Load word cloud if active
+      if (eventData.active_word_cloud) {
+        const { data: wcData } = await supabase
+          .from('word_cloud_entries').select('word')
+          .eq('event_id', eventData.id)
+        const counts: Record<string, number> = {}
+        wcData?.forEach(({ word }: { word: string }) => { counts[word] = (counts[word] || 0) + 1 })
+        setWordCounts(counts)
+      }
 
-    setCurrentQuestion(questionData || null);
-    currentQuestionRef.current = questionData || null;
-    setAllQuestions(allQuestionsData || []);
-    if (pollData) {
-      setActivePoll(pollData);
-      activePollRef.current = pollData;
-      loadPollVotes(pollData);
-    }
-    setLoading(false);
-
-    supabase
-      .channel(`projector-${eventData.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "questions",
+      channel = supabase
+        .channel(`room-${eventData.id}`)
+        .on('postgres_changes', {
+          event: '*', schema: 'public', table: 'questions',
           filter: `event_id=eq.${eventData.id}`,
-        },
-        (payload) => {
-          if (payload.eventType === "UPDATE") {
-            const q = payload.new as Question;
-            setAllQuestions((prev) =>
-              prev.map((item) => (item.id === q.id ? q : item)),
-            );
-            if (q.status === "on_screen") {
-              setCurrentQuestion(q);
-              currentQuestionRef.current = q;
-            } else if (currentQuestionRef.current?.id === q.id) {
-              setCurrentQuestion(null);
-              currentQuestionRef.current = null;
-            }
-          }
-          if (payload.eventType === "INSERT") {
-            setAllQuestions((prev) => [...prev, payload.new as Question]);
-          }
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "events",
+        }, handleRealtimePayload)
+        .on('postgres_changes', {
+          event: 'UPDATE', schema: 'public', table: 'events',
           filter: `id=eq.${eventData.id}`,
-        },
-        (payload) => {
-          setEvent((prev) => (prev ? { ...prev, ...payload.new } : prev));
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "polls",
+        }, (payload) => {
+          setEvent((prev) => prev ? { ...prev, ...payload.new } : prev)
+        })
+        .on('postgres_changes', {
+          event: 'INSERT', schema: 'public', table: 'word_cloud_entries',
           filter: `event_id=eq.${eventData.id}`,
-        },
-        (payload) => {
-          if (payload.eventType === "UPDATE") {
-            const p = payload.new as Poll;
-            if (p.status === "active") {
-              setActivePoll(p);
-              activePollRef.current = p;
-              loadPollVotes(p);
-            } else if (p.status === "closed") {
-              setActivePoll((prev) => (prev?.id === p.id ? null : prev));
-              if (activePollRef.current?.id === p.id)
-                activePollRef.current = null;
+        }, (payload) => {
+          const word = payload.new.word as string
+          setWordCounts(prev => ({ ...prev, [word]: (prev[word] || 0) + 1 }))
+        })
+        .on('postgres_changes', {
+          event: '*', schema: 'public', table: 'polls',
+          filter: `event_id=eq.${eventData.id}`,
+        }, (payload) => {
+          if (payload.eventType === 'UPDATE') {
+            const p = payload.new as Poll
+            if (p.status === 'active') {
+              setActivePoll(p)
+              loadPollVoteCounts(p)
+            } else if (p.status === 'closed') {
+              setActivePoll((prev) => prev?.id === p.id ? null : prev)
             }
           }
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "poll_votes",
-        },
-        () => {
-          if (activePollRef.current) loadPollVotes(activePollRef.current);
-        },
-      )
-      .subscribe();
+        })
+        .on('postgres_changes', {
+          event: 'INSERT', schema: 'public', table: 'poll_votes',
+        }, () => {
+          setActivePoll((prev) => { if (prev) loadPollVoteCounts(prev); return prev })
+        })
+        .subscribe()
 
-    const presenceChannel = supabase.channel(`presence-${eventData.id}`, {
-      config: { presence: { key: `proj-${Math.random()}` } },
-    });
-    presenceChannel
-      .on("presence", { event: "sync" }, () => {
-        setAudienceCount(Object.keys(presenceChannel.presenceState()).length);
+      const presenceChannel = supabase.channel(`presence-${eventData.id}`, {
+        config: { presence: { key: `user-${Math.random()}` } },
       })
-      .subscribe(async (status) => {
-        if (status === "SUBSCRIBED") {
-          await presenceChannel.track({ role: "projector" });
-        }
-      });
+      presenceChannel
+        .on('presence', { event: 'sync' }, () => {
+          setAudienceCount(Object.keys(presenceChannel.presenceState()).length)
+        })
+        .subscribe(async (status) => {
+          if (status === 'SUBSCRIBED') await presenceChannel.track({ role: 'audience' })
+        })
+      channel = channel // keep ts happy — presence cleanup below
+      return presenceChannel
+    }
+
+    let presenceChannel: any
+    initRoom().then((pc) => { presenceChannel = pc })
+    return () => {
+      if (channel) supabase.removeChannel(channel)
+      if (presenceChannel) supabase.removeChannel(presenceChannel)
+    }
+  }, [eventCode, handleRealtimePayload])
+
+  useEffect(() => {
+    if (content.trim().length < 15) { setSimilarQuestion(null); return }
+    const timer = setTimeout(() => {
+      const found = questions.find(q => isSimilar(content, q.content))
+      setSimilarQuestion(found || null)
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [content, questions])
+
+  async function handleSubmit() {
+    if (!content.trim() || !event) return
+    setSubmitting(true); setError('')
+    const supabase = createClient()
+    const fp = getVoterFingerprint()
+
+    const { data: freshEvent } = await supabase
+      .from('events').select('status').eq('id', event.id).single()
+    if (!freshEvent || freshEvent.status === 'ended') {
+      setError('This event has ended. No more questions can be submitted.')
+      setSubmitting(false); return
+    }
+    if (freshEvent.status === 'waiting') {
+      setError('This event hasn\'t started yet.')
+      setSubmitting(false); return
+    }
+    const windowStart = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+    const rateLimit = RATE_LIMITS[hostPlan] ?? 3
+
+    const { count: recentCount } = await supabase
+      .from('questions').select('*', { count: 'exact', head: true })
+      .eq('event_id', event.id).eq('submitter_fingerprint', fp).gte('created_at', windowStart)
+
+    if (recentCount !== null && recentCount >= rateLimit) {
+      setError(`You've submitted ${rateLimit} questions in the last 10 minutes. Please wait a bit.`)
+      setSubmitting(false); return
+    }
+
+    const { count: totalCount } = await supabase
+      .from('questions').select('*', { count: 'exact', head: true }).eq('event_id', event.id)
+
+    if (totalCount !== null && totalCount >= maxQuestions) {
+      setError(`This event has reached its question limit (${maxQuestions}).`)
+      setSubmitting(false); return
+    }
+
+    const { data, error } = await supabase.from('questions').insert({
+      event_id: event.id, content: content.trim(),
+      asked_by: event.force_anonymous ? 'Anonymous' : (askedBy.trim() || 'Anonymous'), source: 'text',
+      status: 'pending', submitter_fingerprint: fp,
+    }).select().single()
+
+    if (error) { setError(error.message); setSubmitting(false); return }
+
+    setLastQuestionId(data.id); setContent(''); setAskedBy('')
+    setSimilarQuestion(null); setSubmitting(false); setSubmitted(true); setShowEmailModal(true)
   }
 
-  if (loading) {
-    return (
-      <main className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <p className="text-sm text-gray-500">Loading...</p>
-      </main>
-    );
+  async function handleEmailSubmit() {
+    if (!email.trim() || !lastQuestionId) { setShowEmailModal(false); return }
+    const supabase = createClient()
+    await supabase.from('questions').update({ email: email.trim() }).eq('id', lastQuestionId)
+    setEmail(''); setShowEmailModal(false)
   }
+
+  async function handleVote(questionId: string) {
+    if (votedIds.has(questionId)) return
+    const fp = getVoterFingerprint()
+    const supabase = createClient()
+    const { error } = await supabase.from('votes').insert({ question_id: questionId, voter_fingerprint: fp })
+    if (error) return
+    await supabase.rpc('increment_votes', { question_id: questionId })
+    setQuestions((prev) =>
+      prev.map((q) => q.id === questionId ? { ...q, votes: q.votes + 1 } : q)
+    )
+    setVotedIds((prev) => {
+      const next = new Set([...prev, questionId])
+      try { localStorage.setItem(`asktc_votes_${String(eventCode).toUpperCase()}`, JSON.stringify([...next])) } catch { }
+      return next
+    })
+  }
+
+  async function handlePollVote(optionIndex: number) {
+    if (!activePoll || votedPollIds.has(activePoll.id)) return
+    setSubmittingPollVote(true)
+    const fp = getVoterFingerprint()
+    const supabase = createClient()
+    const { error } = await supabase.from('poll_votes').insert({
+      poll_id: activePoll.id, option_index: optionIndex, voter_fingerprint: fp,
+    })
+    if (!error) {
+      setVotedPollIds((prev) => {
+        const next = new Set([...prev, activePoll.id])
+        try { localStorage.setItem(`asktc_poll_votes_${String(eventCode).toUpperCase()}`, JSON.stringify([...next])) } catch { }
+        return next
+      })
+      setPollVotes((prev) => { const next = [...prev]; next[optionIndex]++; return next })
+    }
+    setSubmittingPollVote(false)
+  }
+
+  if (notFound) {
+    return (
+      <main className="min-h-screen bg-white flex items-center justify-center px-6">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Event not found</h1>
+          <p className="text-sm text-gray-500">Check your event code and try again.</p>
+        </div>
+      </main>
+    )
+  }
+
+  if (!event) {
+    return (
+      <main className="min-h-screen bg-white flex items-center justify-center">
+        <p className="text-sm text-gray-400">Loading...</p>
+      </main>
+    )
+  }
+
+  const hasVotedOnPoll = activePoll ? votedPollIds.has(activePoll.id) : false
+  const pollTotal = pollVotes.reduce((a, b) => a + b, 0)
 
   return (
-    <main className="min-h-screen bg-gray-900 flex flex-col">
-      {/* TOP BAR */}
-      <div className="flex items-center justify-between px-10 py-6">
-        <span className="text-white font-bold text-lg tracking-tight">
-          ASKTC
-        </span>
-        <div className="flex items-center gap-4">
-          {audienceCount > 0 && (
-            <span className="flex items-center gap-1.5 text-xs text-gray-400">
-              <Users size={12} /> {audienceCount} in room
-            </span>
-          )}
-          <span className="text-gray-400 text-sm">{event?.title}</span>
-          {event?.status === "live" && (
-            <span className="flex items-center gap-1.5 text-xs text-green-400 font-medium">
-              <Radio size={10} className="animate-pulse" /> Live
-            </span>
-          )}
-          {event?.status === "ended" && (
-            <span className="text-xs text-gray-600 font-medium">Ended</span>
-          )}
-        </div>
-      </div>
-
-      {/* MAIN DISPLAY */}
-      <div className="flex-1 flex items-center justify-center px-16">
-        {event?.status === "ended" ? (
-          <EndSummary questions={allQuestions} eventTitle={event.title} />
-        ) : currentQuestion ? (
-          <div className="w-full max-w-5xl">
-            <p className="text-xs font-medium text-blue-400 uppercase tracking-widest mb-8">
-              Question
-            </p>
-            <p className="text-4xl sm:text-5xl font-semibold text-white leading-tight mb-10">
-              {currentQuestion.content}
-            </p>
-            <div className="flex items-center gap-4">
-              <div className="h-px flex-1 bg-white/10" />
-              <span className="text-gray-400 text-sm">
-                {currentQuestion.asked_by}
-              </span>
-              {currentQuestion.source === "voice" && (
-                <span className="flex items-center gap-1.5 text-xs bg-purple-900/50 text-purple-300 px-3 py-1 rounded-full">
-                  <Mic size={10} /> Voice
-                </span>
-              )}
+    <main className="min-h-screen bg-gray-50">
+      <div className="bg-white border-b border-gray-100 px-6 py-4">
+        <div className="max-w-2xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <BrandedLogo branding={branding} size="sm" />
+            <div>
+              <h1 className="font-bold text-gray-900">{event.title}</h1>
+              <p className="text-xs text-gray-400 font-mono">{event.event_code}</p>
             </div>
           </div>
-        ) : activePoll ? (
-          <PollDisplay poll={activePoll} votes={pollVotes} />
-        ) : (
-          <div className="flex items-center gap-16">
-            <div className="text-center">
-              <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6">
-                <MessageSquare size={28} className="text-gray-500" />
-              </div>
-              <p className="text-2xl font-semibold text-white mb-3">
-                {event?.title}
-              </p>
-              <p className="text-gray-500 text-lg mb-8">
-                Waiting for questions...
-              </p>
-              <div className="flex items-center justify-center gap-3">
-                <span className="text-gray-600 text-sm">Join at</span>
-                <span className="bg-white/10 text-white text-sm font-mono px-4 py-2 rounded-lg">
-                  {joinUrl}
+          <div className="flex items-center gap-2">
+            {audienceCount > 1 && (
+              <span className="flex items-center gap-1 text-xs text-gray-400">
+                <Users size={12} /> {audienceCount}
+              </span>
+            )}
+            <button
+              onClick={() => setShowQR((v) => !v)}
+              className={`p-2 rounded-lg transition-colors ${showQR ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+              title="Share room"
+            >
+              {showQR ? <X size={15} /> : <Share2 size={15} />}
+            </button>
+            <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+              event.status === 'live' ? 'bg-green-50 text-green-600' : 'bg-yellow-50 text-yellow-600'
+            }`}>
+              {event.status === 'live' ? (
+                <span className="flex items-center gap-1">
+                  <Circle size={6} className="fill-green-500 text-green-500" /> Live
                 </span>
-                <span className="text-gray-600 text-sm">· code</span>
-                <span className="bg-white/10 text-white text-sm font-mono px-4 py-2 rounded-lg tracking-widest">
-                  {event?.event_code}
+              ) : 'Waiting'}
+            </span>
+          </div>
+        </div>
+
+        {showQR && (
+          <div className="max-w-2xl mx-auto mt-4 pt-4 border-t border-gray-100 flex items-center gap-6">
+            <div className="bg-gray-900 p-3 rounded-xl shrink-0">
+              <QRCodeSVG
+                value={roomUrl}
+                size={96}
+                bgColor="transparent"
+                fgColor="#ffffff"
+                level="M"
+              />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-900 mb-1">Share this room</p>
+              <p className="text-xs text-gray-400 mb-3">Anyone with the link or QR can join and ask questions.</p>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg truncate flex-1">
+                  {roomUrl}
                 </span>
+                <button
+                  onClick={() => navigator.clipboard.writeText(roomUrl)}
+                  className="text-xs bg-gray-900 text-white px-3 py-1.5 rounded-lg hover:bg-gray-700 transition-colors shrink-0"
+                >
+                  Copy
+                </button>
               </div>
             </div>
+          </div>
+        )}
+      </div>
 
-            {joinUrl && event?.event_code && (
-              <div className="flex flex-col items-center gap-3 shrink-0">
-                <div className="p-4 bg-white/5 rounded-2xl shadow-xl">
-                  <QRCode
-                    value={`${joinUrl}?code=${event.event_code}`}
-                    size={180}
-                  />
-                </div>
-                <p className="text-gray-600 text-xs">Scan to join</p>
+      <div className="max-w-2xl mx-auto px-6 py-8 space-y-6">
+
+        {/* ── WORD CLOUD ── */}
+        {event.active_word_cloud && (
+          <div className="bg-white rounded-2xl border border-purple-200 p-6">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-lg">☁️</span>
+              <p className="text-xs font-semibold text-purple-500 uppercase tracking-widest">Word Cloud</p>
+            </div>
+            <WordCloudDisplay words={wordCounts} theme="room" />
+            {event.status === 'live' && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <WordCloudForm eventId={event.id} onSubmit={(word) => {
+                  setWordCounts(prev => ({ ...prev, [word]: (prev[word] || 0) + 1 }))
+                }} />
               </div>
             )}
           </div>
         )}
-      </div>
 
-      {/* BOTTOM BAR */}
-      <div className="px-10 py-5 flex items-center justify-between">
-        <span className="flex items-center gap-1.5 text-xs text-gray-700">
-          {audienceCount > 0 && (
-            <>
-              <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-              {audienceCount} in room
-            </>
+        {/* ── ACTIVE POLL ── */}
+        {activePoll && (
+          <div className="bg-white rounded-2xl border border-indigo-200 p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <BarChart2 size={15} className="text-indigo-500" />
+              <p className="text-xs font-semibold text-indigo-500 uppercase tracking-widest">Live Poll</p>
+            </div>
+            <p className="font-semibold text-gray-900 mb-4">{activePoll.question}</p>
+
+            {!hasVotedOnPoll ? (
+              <div className="space-y-2">
+                {activePoll.options.map((opt, i) => (
+                  <button key={i} onClick={() => handlePollVote(i)} disabled={submittingPollVote}
+                    className="w-full text-left px-4 py-3 rounded-xl border border-gray-200 text-sm text-gray-700 hover:border-indigo-300 hover:bg-indigo-50 transition-colors disabled:opacity-50">
+                    {opt}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {activePoll.options.map((opt, i) => {
+                  const pct = pollTotal > 0 ? Math.round((pollVotes[i] / pollTotal) * 100) : 0
+                  return (
+                    <div key={i}>
+                      <div className="flex items-center justify-between text-sm mb-1">
+                        <span className="text-gray-700">{opt}</span>
+                        <span className="text-gray-500 font-mono text-xs">{pct}%</span>
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-indigo-500 rounded-full transition-all duration-500"
+                          style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  )
+                })}
+                <p className="text-xs text-gray-400 pt-1">{pollTotal} vote{pollTotal !== 1 ? 's' : ''} total</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {event.status !== 'ended' && (
+          <div className="bg-white rounded-2xl border border-gray-200 p-6">
+            <h2 className="font-semibold text-gray-900 mb-4">Ask a question</h2>
+            <div className="space-y-3">
+              <div className="relative">
+                <textarea value={content} onChange={(e) => setContent(e.target.value.slice(0, 280))}
+                  placeholder="Type your question here..." rows={3}
+                  className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm outline-none focus:border-gray-400 transition-colors resize-none"
+                />
+                <span className={`absolute bottom-2 right-3 text-xs font-mono ${content.length >= 260 ? content.length >= 280 ? 'text-red-500' : 'text-amber-500' : 'text-gray-300'}`}>
+                  {content.length}/280
+                </span>
+              </div>
+              {similarQuestion && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                  <p className="text-xs font-semibold text-amber-700 mb-1">Similar question already exists</p>
+                  <p className="text-sm text-amber-800 mb-3">"{similarQuestion.content}"</p>
+                  <button onClick={() => { handleVote(similarQuestion.id); setSimilarQuestion(null); setContent('') }}
+                    className="text-xs bg-amber-100 hover:bg-amber-200 text-amber-700 px-3 py-1.5 rounded-lg font-medium transition-colors">
+                    ▲ Upvote this instead
+                  </button>
+                </div>
+              )}
+              {!event.force_anonymous && (
+                <input type="text" value={askedBy} onChange={(e) => setAskedBy(e.target.value)}
+                  placeholder="Your name (optional)"
+                  className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm outline-none focus:border-gray-400 transition-colors"
+                />
+              )}
+              {event.force_anonymous && (
+                <p className="text-xs text-gray-400 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-gray-300 inline-block" />
+                  This event is anonymous — your name won't be shown
+                </p>
+              )}
+              {error && <p className="text-sm text-red-500">{error}</p>}
+              {submitted && !showEmailModal && <p className="text-sm text-green-600">Question submitted!</p>}
+              <button onClick={handleSubmit} disabled={submitting || !content.trim()}
+                className="w-full bg-gray-900 text-white py-3 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50">
+                {submitting ? 'Submitting...' : 'Submit Question'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div>
+          <h2 className="font-semibold text-gray-900 mb-4">Questions ({questions.length})</h2>
+          {questions.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center">
+              <p className="text-sm text-gray-400">No questions yet. Be the first to ask.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {questions.map((q) => (
+                <div key={q.id} className={`bg-white rounded-2xl border p-5 ${
+                  q.status === 'on_screen' ? 'border-blue-200 bg-blue-50' : 'border-gray-200'
+                }`}>
+                  <p className="text-sm text-gray-900 mb-3">{q.content}</p>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-400">{q.asked_by}</span>
+                      {q.status === 'on_screen' && (
+                        <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-medium">On screen</span>
+                      )}
+                      {q.status === 'answered' && (
+                        <span className="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full font-medium">Answered</span>
+                      )}
+                    </div>
+                    <button onClick={() => handleVote(q.id)} disabled={votedIds.has(q.id)}
+                      className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition-colors ${
+                        votedIds.has(q.id) ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}>
+                      <ChevronUp size={14} /> {q.votes}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
-        </span>
-        <span className="text-gray-700 text-xs">Powered by ASKTC</span>
+        </div>
       </div>
 
-      {event?.status === "live" && event?.id && (
+      {showEmailModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-6 z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm">
+            <h3 className="font-semibold text-gray-900 mb-1">Get notified</h3>
+            <p className="text-sm text-gray-500 mb-4">Drop your email and we'll let you know when your question is answered.</p>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm outline-none focus:border-gray-400 transition-colors mb-3"
+            />
+            <div className="flex gap-3">
+              <button onClick={handleEmailSubmit}
+                className="flex-1 bg-gray-900 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors">
+                Submit
+              </button>
+              <button onClick={() => setShowEmailModal(false)}
+                className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-lg text-sm hover:border-gray-400 transition-colors">
+                Skip
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {event.status === 'live' && event.id && (
         <ReactionBar eventId={event.id} channelName={`reactions-${event.id}`} />
       )}
     </main>
-  );
+  )
 }

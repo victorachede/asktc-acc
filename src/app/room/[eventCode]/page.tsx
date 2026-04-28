@@ -12,6 +12,8 @@ import { QRCodeSVG } from 'qrcode.react'
 import { ReactionBar } from '@/components/reactions/ReactionBar'
 import { WordCloudDisplay } from '@/components/wordcloud/WordCloudDisplay'
 import { WordCloudForm } from '@/components/wordcloud/WordCloudForm'
+import { useBranding } from '@/hooks/useBranding'
+import { BrandedLogo } from '@/app/dashboard/branding/BrandedLogo'
 
 const RATE_LIMITS: Record<string, number> = {
   free: 3,
@@ -70,6 +72,9 @@ export default function RoomPage() {
 
   // Word cloud state
   const [wordCounts, setWordCounts] = useState<Record<string, number>>({})
+
+  // Branding — fires once event loads and host_id is known
+  const { branding } = useBranding(event?.host_id)
 
   const handleRealtimePayload = useCallback((payload: any) => {
     if (payload.eventType === 'INSERT') {
@@ -224,7 +229,6 @@ export default function RoomPage() {
     const supabase = createClient()
     const fp = getVoterFingerprint()
 
-    // Re-fetch event status server-side — client state could be stale
     const { data: freshEvent } = await supabase
       .from('events').select('status').eq('id', event.id).single()
     if (!freshEvent || freshEvent.status === 'ended') {
@@ -281,7 +285,6 @@ export default function RoomPage() {
     const { error } = await supabase.from('votes').insert({ question_id: questionId, voter_fingerprint: fp })
     if (error) return
     await supabase.rpc('increment_votes', { question_id: questionId })
-    // Optimistically update the vote count so the UI responds immediately
     setQuestions((prev) =>
       prev.map((q) => q.id === questionId ? { ...q, votes: q.votes + 1 } : q)
     )
@@ -337,9 +340,12 @@ export default function RoomPage() {
     <main className="min-h-screen bg-gray-50">
       <div className="bg-white border-b border-gray-100 px-6 py-4">
         <div className="max-w-2xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 className="font-bold text-gray-900">{event.title}</h1>
-            <p className="text-xs text-gray-400 font-mono">{event.event_code}</p>
+          <div className="flex items-center gap-3">
+            <BrandedLogo branding={branding} size="sm" />
+            <div>
+              <h1 className="font-bold text-gray-900">{event.title}</h1>
+              <p className="text-xs text-gray-400 font-mono">{event.event_code}</p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {audienceCount > 1 && (
